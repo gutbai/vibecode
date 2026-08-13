@@ -126,6 +126,48 @@ func (m *Manager) SendMessage(ctx context.Context, sessionID, text string, attac
 	return &msg, nil
 }
 
+var allowedControlKeys = map[string]string{
+	"UP":        "Up",
+	"DOWN":      "Down",
+	"LEFT":      "Left",
+	"RIGHT":     "Right",
+	"ENTER":     "Enter",
+	"ESC":       "Escape",
+	"TAB":       "Tab",
+	"SPACE":     "Space",
+	"BACKSPACE": "BSpace",
+}
+
+func (m *Manager) SendControlKeys(ctx context.Context, sessionID string, keys []string) error {
+	if len(keys) == 0 || len(keys) > 8 {
+		return fmt.Errorf("keys must contain 1 to 8 items")
+	}
+	s, ok := m.store.GetSession(sessionID)
+	if !ok {
+		return os.ErrNotExist
+	}
+	p := m.providers[s.Provider]
+	if p == nil || !p.Exists(ctx, s.TMuxName) {
+		return errors.New("session is not running")
+	}
+	mapped := make([]string, 0, len(keys))
+	for _, key := range keys {
+		v, ok := allowedControlKeys[strings.ToUpper(strings.TrimSpace(key))]
+		if !ok {
+			return fmt.Errorf("unsupported control key %q", key)
+		}
+		mapped = append(mapped, v)
+	}
+	if err := p.SendKeys(ctx, s.TMuxName, mapped...); err != nil {
+		return err
+	}
+	s.Status = model.StatusRunning
+	s.UpdatedAt = time.Now().UTC()
+	_ = m.store.PutSession(s)
+	m.publish("session.control", s.ID, map[string][]string{"keys": keys})
+	return nil
+}
+
 func (m *Manager) Stop(ctx context.Context, id string) error {
 	s, ok := m.store.GetSession(id)
 	if !ok {
@@ -204,8 +246,6 @@ func (m *Manager) poll(ctx context.Context) {
 		exists := p.Exists(ctx, s.TMuxName)
 		out, _ := p.Capture(ctx, s.TMuxName, 120)
 		st := inferStatus(out, exists)
-		// A prompt marker remains in tmux scrollback for a moment after the user replies.
-		// Keep RUNNING briefly so an old question does not immediately flip back to WAITING_INPUT.
 		if st == model.StatusWaitingInput && s.Status == model.StatusRunning && time.Since(s.UpdatedAt) < 4*time.Second {
 			st = model.StatusRunning
 		}
