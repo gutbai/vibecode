@@ -29,6 +29,7 @@ fun SessionDetailScreen(repo: VibeRepository, id: String, onBack: () -> Unit) {
     var text by remember { mutableStateOf("") }
     var pending by remember { mutableStateOf<List<Attachment>>(emptyList()) }
     var busy by remember { mutableStateOf(false) }
+    var actionError by remember { mutableStateOf<String?>(null) }
 
     suspend fun refresh() {
         session = runCatching { repo.session(id) }.getOrNull()
@@ -47,8 +48,10 @@ fun SessionDetailScreen(repo: VibeRepository, id: String, onBack: () -> Unit) {
         val uri = clip.getItemAt(0).uri ?: return
         scope.launch {
             busy = true
+            actionError = null
             runCatching { repo.upload(id, ctx.contentResolver, uri) }
                 .onSuccess { pending = pending + it }
+                .onFailure { actionError = it.message }
             busy = false
         }
     }
@@ -57,7 +60,21 @@ fun SessionDetailScreen(repo: VibeRepository, id: String, onBack: () -> Unit) {
         if (busy) return
         scope.launch {
             busy = true
+            actionError = null
             runCatching { repo.send(id, value, emptyList()) }
+                .onFailure { actionError = it.message }
+            refresh()
+            busy = false
+        }
+    }
+
+    fun sendControl(vararg keys: String) {
+        if (busy) return
+        scope.launch {
+            busy = true
+            actionError = null
+            runCatching { repo.sendControl(id, *keys) }
+                .onFailure { actionError = it.message }
             refresh()
             busy = false
         }
@@ -66,9 +83,11 @@ fun SessionDetailScreen(repo: VibeRepository, id: String, onBack: () -> Unit) {
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
         scope.launch {
             busy = true
+            actionError = null
             for (uri in uris) {
                 runCatching { repo.upload(id, ctx.contentResolver, uri) }
                     .onSuccess { pending = pending + it }
+                    .onFailure { actionError = it.message }
             }
             busy = false
         }
@@ -84,7 +103,8 @@ fun SessionDetailScreen(repo: VibeRepository, id: String, onBack: () -> Unit) {
                 actions = {
                     IconButton(onClick = {
                         scope.launch {
-                            repo.stop(id)
+                            runCatching { repo.stop(id) }
+                                .onFailure { actionError = it.message }
                             refresh()
                         }
                     }) {
@@ -132,31 +152,49 @@ fun SessionDetailScreen(repo: VibeRepository, id: String, onBack: () -> Unit) {
                 }
             }
 
-            // Some CLI screens (Claude first-run theme/permission menus) wait for a
-            // bare Enter key. The normal Send button intentionally requires text,
-            // so expose Enter as a separate quick terminal action.
+            actionError?.let {
+                Text(
+                    text = it,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+
+            Text(
+                text = "Điều khiển terminal",
+                modifier = Modifier.padding(horizontal = 12.dp),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
                     .padding(horizontal = 12.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                OutlinedButton(
-                    onClick = { sendQuickInput("") },
-                    enabled = !busy,
-                ) {
-                    Icon(Icons.Default.KeyboardReturn, contentDescription = null)
-                    Spacer(Modifier.width(6.dp))
-                    Text("Enter")
-                }
+                ControlButton("Esc", !busy) { sendControl("ESC") }
+                ControlButton("←", !busy) { sendControl("LEFT") }
+                ControlButton("↑", !busy) { sendControl("UP") }
+                ControlButton("↓", !busy) { sendControl("DOWN") }
+                ControlButton("→", !busy) { sendControl("RIGHT") }
+                ControlButton("Enter", !busy) { sendControl("ENTER") }
+                ControlButton("Tab", !busy) { sendControl("TAB") }
+                ControlButton("Space", !busy) { sendControl("SPACE") }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                TextButton(onClick = { sendQuickInput("y") }, enabled = !busy) { Text("y") }
+                TextButton(onClick = { sendQuickInput("n") }, enabled = !busy) { Text("n") }
                 listOf("1", "2", "3", "4", "5").forEach { option ->
-                    OutlinedButton(
-                        onClick = { sendQuickInput(option) },
-                        enabled = !busy,
-                    ) {
-                        Text(option)
-                    }
+                    TextButton(onClick = { sendQuickInput(option) }, enabled = !busy) { Text(option) }
                 }
             }
 
@@ -199,9 +237,13 @@ fun SessionDetailScreen(repo: VibeRepository, id: String, onBack: () -> Unit) {
                     onClick = {
                         scope.launch {
                             busy = true
+                            actionError = null
                             runCatching { repo.send(id, text, pending) }
-                            text = ""
-                            pending = emptyList()
+                                .onFailure { actionError = it.message }
+                                .onSuccess {
+                                    text = ""
+                                    pending = emptyList()
+                                }
                             refresh()
                             busy = false
                         }
@@ -212,6 +254,17 @@ fun SessionDetailScreen(repo: VibeRepository, id: String, onBack: () -> Unit) {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ControlButton(label: String, enabled: Boolean, onClick: () -> Unit) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Text(label)
     }
 }
 
