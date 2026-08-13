@@ -43,6 +43,7 @@ func New(cfg config.Config, sm *session.Manager, hub *Hub) *Server {
 	mux.HandleFunc("POST /api/sessions", s.auth(s.createSession))
 	mux.HandleFunc("GET /api/sessions/{id}", s.auth(s.getSession))
 	mux.HandleFunc("POST /api/sessions/{id}/messages", s.auth(s.sendMessage))
+	mux.HandleFunc("POST /api/sessions/{id}/keys", s.auth(s.sendKeys))
 	mux.HandleFunc("POST /api/sessions/{id}/attachments", s.auth(s.uploadAttachment))
 	mux.HandleFunc("POST /api/sessions/{id}/stop", s.auth(s.stopSession))
 	mux.HandleFunc("GET /api/projects/{id}/files", s.auth(s.listFiles))
@@ -133,6 +134,20 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonOut(w, 201, v)
+}
+func (s *Server) sendKeys(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Keys []string `json:"keys"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		errOut(w, 400, err)
+		return
+	}
+	if err := s.sessions.SendControlKeys(r.Context(), r.PathValue("id"), in.Keys); err != nil {
+		errOut(w, 400, err)
+		return
+	}
+	jsonOut(w, 200, map[string]bool{"ok": true})
 }
 func (s *Server) stopSession(w http.ResponseWriter, r *http.Request) {
 	if err := s.sessions.Stop(r.Context(), r.PathValue("id")); err != nil {
@@ -276,5 +291,5 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 		if err := c.WriteJSON(e); err != nil {
 			return
 		}
-	}
+}
 }
