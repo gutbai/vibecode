@@ -40,6 +40,9 @@ class ApiClient(private val machine: MachineConfig) {
     suspend fun search(projectId:String,q:String):List<SearchResult> = get("/api/projects/$projectId/search?q=${enc(q)}&limit=200")
     suspend fun sendMessage(sessionId:String,text:String,attachments:List<Attachment>):SessionMessage =
         post("/api/sessions/$sessionId/messages", SendMessageRequest(text, attachments.map { it.id }))
+    suspend fun sendControl(sessionId:String,keys:List<String>) {
+        post<OkResponse,Map<String,List<String>>>("/api/sessions/$sessionId/keys", mapOf("keys" to keys))
+    }
     suspend fun createSession(provider:String,projectId:String,title:String,prompt:String):Session =
         post("/api/sessions", CreateSessionRequest(provider, projectId, title, prompt))
     suspend fun stopSession(id:String) { post<OkResponse,Map<String,String>>("/api/sessions/$id/stop", emptyMap()) }
