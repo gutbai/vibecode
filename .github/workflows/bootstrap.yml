@@ -23,6 +23,8 @@ jobs:
           tar -xzf /tmp/vibecode-source.tar.gz -C .
           rm -rf _bootstrap
           rm -f .github/workflows/bootstrap.yml
+          rm -f .github/workflows/agent.yml
+          rm -f .github/workflows/android.yml
           chmod +x deploy/install-agent.sh
       - name: Commit restored source
         shell: bash
