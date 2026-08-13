@@ -64,12 +64,21 @@ resolve_target_user() {
 TARGET_USER="$(resolve_target_user)"
 id "${TARGET_USER}" >/dev/null 2>&1 || die "User '${TARGET_USER}' does not exist"
 TARGET_HOME="$(getent passwd "${TARGET_USER}" | cut -d: -f6)"
+TARGET_GROUP="$(id -gn "${TARGET_USER}")"
 [[ -n "${TARGET_HOME}" ]] || die "Could not resolve home directory for ${TARGET_USER}"
 
 DATA_DIR="${VIBECODE_DATA_DIR:-${TARGET_HOME}/.vibecode}"
 PROJECTS_ROOT="${VIBECODE_PROJECTS_ROOT:-${TARGET_HOME}/projects}"
 LISTEN="${VIBECODE_LISTEN:-127.0.0.1:8787}"
 GO_VERSION="${GO_VERSION:-${DEFAULT_GO_VERSION}}"
+
+run_as_target() {
+  if [[ "${EUID}" -eq 0 ]]; then
+    runuser -u "${TARGET_USER}" -- "$@"
+  else
+    sudo -u "${TARGET_USER}" -H "$@"
+  fi
+}
 
 install_packages() {
   log "Installing required Ubuntu packages..."
@@ -107,12 +116,12 @@ install_go() {
   archive="go${GO_VERSION}.linux-${arch}.tar.gz"
   url="https://go.dev/dl/${archive}"
   tmp="$(mktemp -d)"
-  trap 'rm -rf "${tmp:-}"' RETURN
 
   log "Installing Go ${GO_VERSION} for ${arch}..."
   curl -fL --retry 3 --connect-timeout 15 "${url}" -o "${tmp}/${archive}"
   ${SUDO} rm -rf /usr/local/go
   ${SUDO} tar -C /usr/local -xzf "${tmp}/${archive}"
+  rm -rf "${tmp}"
 
   export PATH="/usr/local/go/bin:${PATH}"
   go_is_new_enough || die "Go installation completed but Go >= 1.23 is still not available"
@@ -121,16 +130,21 @@ install_go() {
 
 find_user_command() {
   local command_name="$1"
-  ${SUDO} -u "${TARGET_USER}" -H bash -lc "command -v '${command_name}' 2>/dev/null || true" | tail -n 1
+  run_as_target bash -lc "command -v '${command_name}' 2>/dev/null || true" | tail -n 1
 }
 
 install_binary() {
   log "Building VibeCode Agent..."
   pushd "${AGENT_DIR}" >/dev/null
-  /usr/local/go/bin/go mod download 2>/dev/null || go mod download
-  /usr/local/go/bin/go test ./... 2>/dev/null || go test ./...
-  /usr/local/go/bin/go build -trimpath -ldflags="-s -w" -o "${APP_NAME}" ./cmd/vibecode-agent 2>/dev/null \
-    || go build -trimpath -ldflags="-s -w" -o "${APP_NAME}" ./cmd/vibecode-agent
+  if [[ -x /usr/local/go/bin/go ]]; then
+    /usr/local/go/bin/go mod download
+    /usr/local/go/bin/go test ./...
+    /usr/local/go/bin/go build -trimpath -ldflags="-s -w" -o "${APP_NAME}" ./cmd/vibecode-agent
+  else
+    go mod download
+    go test ./...
+    go build -trimpath -ldflags="-s -w" -o "${APP_NAME}" ./cmd/vibecode-agent
+  fi
   popd >/dev/null
 
   ${SUDO} mkdir -p "${INSTALL_DIR}"
@@ -140,7 +154,7 @@ install_binary() {
 
 ensure_directories() {
   ${SUDO} mkdir -p "${CONFIG_DIR}" "${DATA_DIR}" "${PROJECTS_ROOT}"
-  ${SUDO} chown -R "${TARGET_USER}:${TARGET_USER}" "${DATA_DIR}" "${PROJECTS_ROOT}"
+  ${SUDO} chown -R "${TARGET_USER}:${TARGET_GROUP}" "${DATA_DIR}" "${PROJECTS_ROOT}"
   ${SUDO} chmod 700 "${DATA_DIR}"
 }
 
@@ -150,27 +164,30 @@ create_config() {
     return
   fi
 
-  local token claude_cmd codex_cmd repo_json
+  local token claude_cmd codex_cmd repo_path
   token="$(openssl rand -hex 32)"
   claude_cmd="$(find_user_command claude)"
   codex_cmd="$(find_user_command codex)"
 
   if [[ -z "${claude_cmd}" ]]; then
     claude_cmd="claude"
-    warn "Claude Code CLI was not found for ${TARGET_USER}. Install it before starting Claude sessions."
+    warn "Claude Code CLI was not found for ${TARGET_USER}. Install/login to it before starting Claude sessions."
   fi
   if [[ -z "${codex_cmd}" ]]; then
     codex_cmd="codex"
-    warn "Codex CLI was not found for ${TARGET_USER}. Install it before starting Codex sessions."
+    warn "Codex CLI was not found for ${TARGET_USER}. Install/login to it before starting Codex sessions."
   fi
 
-  repo_json="$(realpath "${REPO_ROOT}")"
+  repo_path="$(realpath "${REPO_ROOT}")"
+  if ! run_as_target test -r "${repo_path}"; then
+    warn "${TARGET_USER} cannot read ${repo_path}. Move/chown the repo or edit ${CONFIG_FILE} after installation."
+  fi
 
   jq -n \
     --arg listen "${LISTEN}" \
     --arg token "${token}" \
     --arg dataDir "${DATA_DIR}" \
-    --arg projectPath "${repo_json}" \
+    --arg projectPath "${repo_path}" \
     --arg claude "${claude_cmd}" \
     --arg codex "${codex_cmd}" \
     '{
@@ -206,7 +223,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=${TARGET_USER}
-Group=${TARGET_USER}
+Group=${TARGET_GROUP}
 WorkingDirectory=${INSTALL_DIR}
 Environment=HOME=${TARGET_HOME}
 Environment=PATH=${service_path}
@@ -250,11 +267,11 @@ health_check() {
     hostport="127.0.0.1:${hostport##*:}"
   fi
 
-  health_url="http://${hostport}/health"
+  health_url="http://${hostport}/api/health"
   if curl -fsS --max-time 3 "${health_url}" >/dev/null 2>&1; then
     ok "Health check OK: ${health_url}"
   else
-    warn "Service is active, but ${health_url} did not return success. Check the configured API routes/logs if needed."
+    warn "Service is active, but ${health_url} did not return success. Check: sudo journalctl -u ${APP_NAME} -n 100 --no-pager"
   fi
 }
 
@@ -282,7 +299,7 @@ Useful commands:
   sudo systemctl status vibecode-agent
   sudo systemctl restart vibecode-agent
   sudo journalctl -u vibecode-agent -f
-  tmux ls
+  sudo -u ${TARGET_USER} tmux ls
 
 Edit projects/providers:
   sudo nano ${CONFIG_FILE}
