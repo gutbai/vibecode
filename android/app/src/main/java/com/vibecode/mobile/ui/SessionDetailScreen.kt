@@ -30,6 +30,7 @@ fun SessionDetailScreen(repo: VibeRepository, id: String, onBack: () -> Unit) {
     var pending by remember { mutableStateOf<List<Attachment>>(emptyList()) }
     var busy by remember { mutableStateOf(false) }
     var actionError by remember { mutableStateOf<String?>(null) }
+    var controlsExpanded by remember { mutableStateOf(false) }
 
     suspend fun refresh() {
         session = runCatching { repo.session(id) }.getOrNull()
@@ -161,40 +162,44 @@ fun SessionDetailScreen(repo: VibeRepository, id: String, onBack: () -> Unit) {
                 )
             }
 
-            Text(
-                text = "Điều khiển terminal",
-                modifier = Modifier.padding(horizontal = 12.dp),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            OutlinedButton(
+                onClick = { controlsExpanded = !controlsExpanded },
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
             ) {
-                ControlButton("Esc", !busy) { sendControl("ESC") }
-                ControlButton("←", !busy) { sendControl("LEFT") }
-                ControlButton("↑", !busy) { sendControl("UP") }
-                ControlButton("↓", !busy) { sendControl("DOWN") }
-                ControlButton("→", !busy) { sendControl("RIGHT") }
-                ControlButton("Enter", !busy) { sendControl("ENTER") }
-                ControlButton("Tab", !busy) { sendControl("TAB") }
-                ControlButton("Space", !busy) { sendControl("SPACE") }
+                Text(if (controlsExpanded) "⌨ Ẩn phím phụ  ▲" else "⌨ Phím phụ  ▼")
             }
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 12.dp, vertical = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                TextButton(onClick = { sendQuickInput("y") }, enabled = !busy) { Text("y") }
-                TextButton(onClick = { sendQuickInput("n") }, enabled = !busy) { Text("n") }
-                listOf("1", "2", "3", "4", "5").forEach { option ->
-                    TextButton(onClick = { sendQuickInput(option) }, enabled = !busy) { Text(option) }
+            if (controlsExpanded) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    ControlButton("Esc", !busy) { sendControl("ESC") }
+                    ControlButton("←", !busy) { sendControl("LEFT") }
+                    ControlButton("↑", !busy) { sendControl("UP") }
+                    ControlButton("↓", !busy) { sendControl("DOWN") }
+                    ControlButton("→", !busy) { sendControl("RIGHT") }
+                    ControlButton("Enter", !busy) { sendControl("ENTER") }
+                    ControlButton("Tab", !busy) { sendControl("TAB") }
+                    ControlButton("Space", !busy) { sendControl("SPACE") }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 12.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    TextButton(onClick = { sendQuickInput("y") }, enabled = !busy) { Text("y") }
+                    TextButton(onClick = { sendQuickInput("n") }, enabled = !busy) { Text("n") }
+                    listOf("1", "2", "3", "4", "5").forEach { option ->
+                        TextButton(onClick = { sendQuickInput(option) }, enabled = !busy) { Text(option) }
+                    }
                 }
             }
 
