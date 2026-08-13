@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -95,8 +94,6 @@ fun SessionsScreen(
 
         Spacer(Modifier.height(18.dp))
 
-        // 1080px wide phones are commonly ~360dp at xxhdpi. A 2x2 grid is safer
-        // than forcing four status chips into one horizontal row.
         StatusFilterGrid(
             selected = filter,
             all = sessions.size,
