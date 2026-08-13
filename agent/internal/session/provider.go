@@ -11,6 +11,7 @@ import (
 type Provider interface {
 	Start(ctx context.Context, tmuxName, workdir string) error
 	Send(ctx context.Context, tmuxName, text string) error
+	SendKeys(ctx context.Context, tmuxName string, keys ...string) error
 	Stop(ctx context.Context, tmuxName string) error
 	Capture(ctx context.Context, tmuxName string, lines int) (string, error)
 	Exists(ctx context.Context, tmuxName string) bool
@@ -31,6 +32,15 @@ func (p *TMuxProvider) Send(ctx context.Context, tmuxName, text string) error {
 		return err
 	}
 	return run(ctx, "tmux", "send-keys", "-t", tmuxName, "Enter")
+}
+
+func (p *TMuxProvider) SendKeys(ctx context.Context, tmuxName string, keys ...string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	args := []string{"send-keys", "-t", tmuxName}
+	args = append(args, keys...)
+	return run(ctx, "tmux", args...)
 }
 
 func (p *TMuxProvider) Stop(ctx context.Context, tmuxName string) error {
