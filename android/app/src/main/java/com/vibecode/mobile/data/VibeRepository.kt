@@ -20,6 +20,7 @@ class VibeRepository(private var config:MachineConfig?) {
     fun connect(scope:CoroutineScope){ val a=api?:return; socket?.cancel(); socket=a.socket(onEvent={e-> if(e.type.startsWith("session.")) scope.launch{refresh()}},onClosed={}) }
     suspend fun session(id:String)=api!!.session(id)
     suspend fun send(id:String,text:String,attachments:List<Attachment>)=api!!.sendMessage(id,text,attachments)
+    suspend fun sendControl(id:String,vararg keys:String)=api!!.sendControl(id,keys.toList())
     suspend fun upload(id:String,resolver:ContentResolver,uri:Uri)=api!!.upload(id,resolver,uri)
     suspend fun stop(id:String)=api!!.stopSession(id)
     suspend fun create(provider:String,projectId:String,title:String,prompt:String)=api!!.createSession(provider,projectId,title,prompt)
