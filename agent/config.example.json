@@ -1,0 +1,14 @@
+{
+  "listen": "127.0.0.1:8787",
+  "token": "CHANGE_ME_TO_A_LONG_RANDOM_TOKEN",
+  "dataDir": "/home/ubuntu/.vibecode",
+  "maxUploadMB": 50,
+  "projects": [
+    {"id": "vibecode", "name": "VibeCode", "path": "/home/ubuntu/projects/VibeCode"},
+    {"id": "rok-auto", "name": "ROK-Auto", "path": "/home/ubuntu/projects/ROK-Auto"}
+  ],
+  "providers": {
+    "claude": {"command": "claude", "args": []},
+    "codex": {"command": "codex", "args": []}
+  }
+}

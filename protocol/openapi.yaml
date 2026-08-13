@@ -1,0 +1,129 @@
+openapi: 3.1.0
+info:
+  title: VibeCode Agent API
+  version: 0.1.0
+servers:
+  - url: https://your-vps.example.com
+security:
+  - bearerAuth: []
+paths:
+  /api/health:
+    get:
+      security: []
+      responses:
+        '200': {description: OK}
+  /api/machine:
+    get:
+      responses:
+        '200': {description: Machine information}
+  /api/projects:
+    get:
+      responses:
+        '200': {description: Project list}
+  /api/sessions:
+    get:
+      responses:
+        '200': {description: Session list}
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, projectId]
+              properties:
+                provider: {type: string, enum: [claude, codex]}
+                projectId: {type: string}
+                title: {type: string}
+                prompt: {type: string}
+      responses:
+        '201': {description: Created session}
+  /api/sessions/{id}:
+    get:
+      parameters: [{$ref: '#/components/parameters/sessionId'}]
+      responses:
+        '200': {description: Session with message history}
+  /api/sessions/{id}/messages:
+    post:
+      parameters: [{$ref: '#/components/parameters/sessionId'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text: {type: string}
+                attachmentIds: {type: array, items: {type: string}}
+      responses:
+        '201': {description: Message accepted}
+  /api/sessions/{id}/attachments:
+    post:
+      parameters: [{$ref: '#/components/parameters/sessionId'}]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: {type: string, format: binary}
+      responses:
+        '201': {description: Uploaded attachment}
+  /api/sessions/{id}/stop:
+    post:
+      parameters: [{$ref: '#/components/parameters/sessionId'}]
+      responses:
+        '200': {description: Session stopped}
+  /api/projects/{id}/files:
+    get:
+      parameters:
+        - {$ref: '#/components/parameters/projectId'}
+        - {name: path, in: query, schema: {type: string}}
+      responses:
+        '200': {description: Directory entries}
+  /api/projects/{id}/file:
+    get:
+      parameters:
+        - {$ref: '#/components/parameters/projectId'}
+        - {name: path, in: query, required: true, schema: {type: string}}
+      responses:
+        '200': {description: UTF-8 file preview}
+  /api/projects/{id}/search:
+    get:
+      parameters:
+        - {$ref: '#/components/parameters/projectId'}
+        - {name: q, in: query, required: true, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, maximum: 500}}
+      responses:
+        '200': {description: ripgrep results}
+  /api/projects/{id}/git/status:
+    get:
+      parameters: [{$ref: '#/components/parameters/projectId'}]
+      responses: {'200': {description: git status}}
+  /api/projects/{id}/git/diff:
+    get:
+      parameters: [{$ref: '#/components/parameters/projectId'}]
+      responses: {'200': {description: git diff}}
+  /api/projects/{id}/git/log:
+    get:
+      parameters: [{$ref: '#/components/parameters/projectId'}]
+      responses: {'200': {description: git log}}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    sessionId:
+      name: id
+      in: path
+      required: true
+      schema: {type: string}
+    projectId:
+      name: id
+      in: path
+      required: true
+      schema: {type: string}
