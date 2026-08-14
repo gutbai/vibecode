@@ -1,0 +1,19 @@
+name: Deploy scripts
+
+on:
+  push:
+    paths:
+      - 'deploy/**'
+      - '.github/workflows/deploy-scripts.yml'
+  pull_request:
+    paths:
+      - 'deploy/**'
+      - '.github/workflows/deploy-scripts.yml'
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash syntax check
+        run: bash -n deploy/*.sh
