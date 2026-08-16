@@ -17,8 +17,11 @@ import java.util.concurrent.TimeUnit
 class ApiClient(private val machine: MachineConfig) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val http = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
-    private fun url(path:String) = machine.baseUrl.trimEnd('/') + path
-    private fun req(path:String) = Request.Builder().url(url(path)).header("Authorization","Bearer ${machine.token}")
+    private val baseUrl = machine.baseUrl.trim().trimEnd('/')
+    private val token = machine.token.trim()
+
+    private fun url(path:String) = baseUrl + path
+    private fun req(path:String) = Request.Builder().url(url(path)).header("Authorization","Bearer $token")
 
     private suspend inline fun <reified T> get(path:String):T = withContext(Dispatchers.IO) {
         http.newCall(req(path).get().build()).execute().use { r ->
@@ -70,8 +73,8 @@ class ApiClient(private val machine: MachineConfig) {
         } finally { tmp.delete() }
     }
     fun socket(onEvent:(Event)->Unit,onClosed:(Throwable?)->Unit):WebSocket {
-        val wsBase=machine.baseUrl.trimEnd('/').replaceFirst("https://","wss://").replaceFirst("http://","ws://")
-        val request=Request.Builder().url("$wsBase/ws?token=${enc(machine.token)}").build()
+        val wsBase=baseUrl.replaceFirst("https://","wss://").replaceFirst("http://","ws://")
+        val request=Request.Builder().url("$wsBase/ws?token=${enc(token)}").build()
         return http.newWebSocket(request,object:WebSocketListener(){
             override fun onMessage(webSocket: WebSocket, text: String) { runCatching{json.decodeFromString<Event>(text)}.onSuccess(onEvent) }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) { onClosed(t) }
