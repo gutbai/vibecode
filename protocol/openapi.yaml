@@ -91,6 +91,22 @@ paths:
         - {name: path, in: query, required: true, schema: {type: string}}
       responses:
         '200': {description: UTF-8 file preview}
+    put:
+      parameters:
+        - {$ref: '#/components/parameters/projectId'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path, content]
+              properties:
+                path: {type: string}
+                content: {type: string, maxLength: 2097152}
+      responses:
+        '200': {description: Existing project file updated}
+        '400': {description: Invalid path, file, or content}
   /api/projects/{id}/search:
     get:
       parameters:
