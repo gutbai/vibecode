@@ -19,7 +19,7 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.Card
+import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -37,6 +37,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.vibecode.mobile.data.FileNode
 import com.vibecode.mobile.data.SearchResult
@@ -67,10 +68,12 @@ fun FilesScreen(repo: VibeRepository, enabled: Boolean) {
 
     val openedFile = opened
     if (openedFile != null) {
-        FileViewer(
+        FileEditor(
             path = openedFile.first,
             content = openedFile.second,
+            enabled = enabled,
             onBack = { opened = null },
+            onSave = { draft -> repo.writeFile(projectId, openedFile.first, draft) },
         )
     } else {
         Column(
@@ -207,28 +210,79 @@ fun FilesScreen(repo: VibeRepository, enabled: Boolean) {
 }
 
 @Composable
-private fun FileViewer(
+private fun FileEditor(
     path: String,
     content: String,
+    enabled: Boolean,
     onBack: () -> Unit,
+    onSave: suspend (String) -> Unit,
 ) {
+    val scope = rememberCoroutineScope()
+    var original by remember(path, content) { mutableStateOf(content) }
+    var draft by remember(path, content) { mutableStateOf(content) }
+    var saving by remember(path) { mutableStateOf(false) }
+    var error by remember(path) { mutableStateOf<String?>(null) }
+    val dirty = draft != original
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            IconButton(onClick = onBack, enabled = !saving) {
                 Icon(Icons.Default.ArrowBack, contentDescription = "Back")
             }
-            Text(path, style = MaterialTheme.typography.titleMedium)
-        }
-        Card(modifier = Modifier.fillMaxSize()) {
-            LazyColumn(modifier = Modifier.padding(12.dp)) {
-                item {
-                    Text(content, style = MaterialTheme.typography.bodySmall)
-                }
+            Text(
+                text = path,
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f),
+            )
+            Button(
+                enabled = enabled && dirty && !saving,
+                onClick = {
+                    scope.launch {
+                        saving = true
+                        error = null
+                        runCatching { onSave(draft) }
+                            .onSuccess { original = draft }
+                            .onFailure { error = it.message ?: "Không thể lưu file" }
+                        saving = false
+                    }
+                },
+            ) {
+                Text(if (saving) "Saving..." else "Save")
             }
         }
+
+        Text(
+            text = when {
+                error != null -> error.orEmpty()
+                saving -> "Đang lưu lên VPS..."
+                dirty -> "Unsaved changes"
+                else -> "Saved"
+            },
+            style = MaterialTheme.typography.labelMedium,
+            color = if (error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(vertical = 6.dp),
+        )
+
+        OutlinedTextField(
+            value = draft,
+            onValueChange = {
+                draft = it
+                error = null
+            },
+            enabled = enabled && !saving,
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+            label = { Text("Remote file") },
+        )
     }
 }
