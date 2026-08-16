@@ -40,10 +40,9 @@ class ApiClient(private val machine: MachineConfig) {
     suspend fun session(id:String):Session = get("/api/sessions/$id")
     suspend fun machine():MachineInfo = get("/api/machine")
     suspend fun files(projectId:String,path:String):List<FileNode> = get("/api/projects/$projectId/files?path=${enc(path)}")
-    suspend fun readFile(projectId:String,path:String):String = get<FileContentResponse>("/api/projects/$projectId/file?path=${enc(path)}").content
-    suspend fun writeFile(projectId:String,path:String,content:String) {
-        put<OkResponse,FileWriteRequest>("/api/projects/$projectId/file", FileWriteRequest(path, content))
-    }
+    suspend fun readFile(projectId:String,path:String):FileContentResponse = get("/api/projects/$projectId/file?path=${enc(path)}")
+    suspend fun writeFile(projectId:String,path:String,content:String,expectedSha256:String):FileWriteResponse =
+        put("/api/projects/$projectId/file", FileWriteRequest(path, content, expectedSha256))
     suspend fun search(projectId:String,q:String):List<SearchResult> = get("/api/projects/$projectId/search?q=${enc(q)}&limit=200")
     suspend fun sendMessage(sessionId:String,text:String,attachments:List<Attachment>):SessionMessage =
         post("/api/sessions/$sessionId/messages", SendMessageRequest(text, attachments.map { it.id }))
