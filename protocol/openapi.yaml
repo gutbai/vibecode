@@ -90,7 +90,7 @@ paths:
         - {$ref: '#/components/parameters/projectId'}
         - {name: path, in: query, required: true, schema: {type: string}}
       responses:
-        '200': {description: UTF-8 file preview}
+        '200': {description: UTF-8 file preview with sha256 revision}
     put:
       parameters:
         - {$ref: '#/components/parameters/projectId'}
@@ -100,13 +100,15 @@ paths:
           application/json:
             schema:
               type: object
-              required: [path, content]
+              required: [path, content, expectedSha256]
               properties:
                 path: {type: string}
                 content: {type: string, maxLength: 2097152}
+                expectedSha256: {type: string, description: SHA-256 returned by the most recent GET for this file}
       responses:
-        '200': {description: Existing project file updated}
+        '200': {description: Existing project file updated; response includes the new sha256 revision}
         '400': {description: Invalid path, file, or content}
+        '409': {description: File changed on the VPS after it was opened}
   /api/projects/{id}/search:
     get:
       parameters:
