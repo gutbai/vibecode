@@ -52,6 +52,9 @@ func New(cfg config.Config, sm *session.Manager, hub *Hub) *Server {
 	mux.HandleFunc("GET /api/projects/{id}/files", s.auth(s.listFiles))
 	mux.HandleFunc("GET /api/projects/{id}/file", s.auth(s.readFile))
 	mux.HandleFunc("PUT /api/projects/{id}/file", s.auth(s.writeFile))
+	mux.HandleFunc("GET /api/projects/{id}/file/history", s.auth(s.fileHistory))
+	mux.HandleFunc("GET /api/projects/{id}/file/revision", s.auth(s.readFileRevision))
+	mux.HandleFunc("POST /api/projects/{id}/file/restore", s.auth(s.restoreFileRevision))
 	mux.HandleFunc("GET /api/projects/{id}/search", s.auth(s.search))
 	mux.HandleFunc("GET /api/projects/{id}/git/status", s.auth(s.gitStatus))
 	mux.HandleFunc("GET /api/projects/{id}/git/diff", s.auth(s.gitDiff))
@@ -250,7 +253,8 @@ func (s *Server) readFile(w http.ResponseWriter, r *http.Request) {
 	})
 }
 func (s *Server) writeFile(w http.ResponseWriter, r *http.Request) {
-	p, err := s.project(r.PathValue("id"))
+	projectID := r.PathValue("id")
+	p, err := s.project(projectID)
 	if err != nil {
 		errOut(w, 404, err)
 		return
@@ -263,6 +267,19 @@ func (s *Server) writeFile(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		errOut(w, 400, err)
+		return
+	}
+	current, err := filesvc.Read(p.Path, in.Path, maxEditableFileBytes)
+	if err != nil {
+		errOut(w, 400, err)
+		return
+	}
+	if in.ExpectedSHA256 != "" && !strings.EqualFold(filesvc.SHA256(current), in.ExpectedSHA256) {
+		errOut(w, http.StatusConflict, filesvc.ErrContentChanged)
+		return
+	}
+	if _, err := filesvc.RecordRevision(s.cfg.DataDir, projectID, in.Path, current); err != nil {
+		errOut(w, 500, fmt.Errorf("record file history: %w", err))
 		return
 	}
 	content := []byte(in.Content)
@@ -278,6 +295,100 @@ func (s *Server) writeFile(w http.ResponseWriter, r *http.Request) {
 		"ok":     true,
 		"path":   filepath.ToSlash(in.Path),
 		"sha256": filesvc.SHA256(content),
+	})
+}
+func (s *Server) fileHistory(w http.ResponseWriter, r *http.Request) {
+	projectID := r.PathValue("id")
+	p, err := s.project(projectID)
+	if err != nil {
+		errOut(w, 404, err)
+		return
+	}
+	rel := r.URL.Query().Get("path")
+	if _, err := filesvc.Read(p.Path, rel, maxEditableFileBytes); err != nil {
+		errOut(w, 400, err)
+		return
+	}
+	revisions, err := filesvc.ListRevisions(s.cfg.DataDir, projectID, rel)
+	if err != nil {
+		errOut(w, 500, err)
+		return
+	}
+	jsonOut(w, 200, revisions)
+}
+func (s *Server) readFileRevision(w http.ResponseWriter, r *http.Request) {
+	projectID := r.PathValue("id")
+	p, err := s.project(projectID)
+	if err != nil {
+		errOut(w, 404, err)
+		return
+	}
+	rel := r.URL.Query().Get("path")
+	if _, err := filesvc.Read(p.Path, rel, maxEditableFileBytes); err != nil {
+		errOut(w, 400, err)
+		return
+	}
+	content, revision, err := filesvc.ReadRevision(s.cfg.DataDir, projectID, rel, r.URL.Query().Get("revisionId"), maxEditableFileBytes)
+	if err != nil {
+		errOut(w, 400, err)
+		return
+	}
+	jsonOut(w, 200, map[string]interface{}{
+		"path":      filepath.ToSlash(rel),
+		"content":   string(content),
+		"revision":  revision,
+		"sha256":    revision.SHA256,
+		"createdAt": revision.CreatedAt,
+	})
+}
+func (s *Server) restoreFileRevision(w http.ResponseWriter, r *http.Request) {
+	projectID := r.PathValue("id")
+	p, err := s.project(projectID)
+	if err != nil {
+		errOut(w, 404, err)
+		return
+	}
+	var in struct {
+		Path           string `json:"path"`
+		RevisionID     string `json:"revisionId"`
+		ExpectedSHA256 string `json:"expectedSha256"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		errOut(w, 400, err)
+		return
+	}
+	current, err := filesvc.Read(p.Path, in.Path, maxEditableFileBytes)
+	if err != nil {
+		errOut(w, 400, err)
+		return
+	}
+	currentSHA := filesvc.SHA256(current)
+	if in.ExpectedSHA256 != "" && !strings.EqualFold(currentSHA, in.ExpectedSHA256) {
+		errOut(w, http.StatusConflict, filesvc.ErrContentChanged)
+		return
+	}
+	restored, _, err := filesvc.ReadRevision(s.cfg.DataDir, projectID, in.Path, in.RevisionID, maxEditableFileBytes)
+	if err != nil {
+		errOut(w, 400, err)
+		return
+	}
+	if _, err := filesvc.RecordRevision(s.cfg.DataDir, projectID, in.Path, current); err != nil {
+		errOut(w, 500, fmt.Errorf("record file history: %w", err))
+		return
+	}
+	if err := filesvc.Write(p.Path, in.Path, restored, maxEditableFileBytes, currentSHA); err != nil {
+		if errors.Is(err, filesvc.ErrContentChanged) {
+			errOut(w, http.StatusConflict, err)
+			return
+		}
+		errOut(w, 400, err)
+		return
+	}
+	jsonOut(w, 200, map[string]interface{}{
+		"ok":      true,
+		"path":    filepath.ToSlash(in.Path),
+		"content": string(restored),
+		"sha256":  filesvc.SHA256(restored),
 	})
 }
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
