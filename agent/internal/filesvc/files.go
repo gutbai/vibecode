@@ -2,6 +2,7 @@ package filesvc
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -80,4 +81,85 @@ func Read(root, rel string, maxBytes int64) ([]byte, error) {
 		return nil, errors.New("file too large to preview")
 	}
 	return os.ReadFile(p)
+}
+
+func Write(root, rel string, content []byte, maxBytes int64) error {
+	if strings.TrimSpace(rel) == "" {
+		return errors.New("file path is required")
+	}
+	if int64(len(content)) > maxBytes {
+		return fmt.Errorf("file exceeds edit limit of %d bytes", maxBytes)
+	}
+
+	p, err := SafeJoin(root, rel)
+	if err != nil {
+		return err
+	}
+	p, err = resolveExistingInsideRoot(root, p)
+	if err != nil {
+		return err
+	}
+
+	st, err := os.Stat(p)
+	if err != nil {
+		return err
+	}
+	if st.IsDir() {
+		return errors.New("path is a directory")
+	}
+	if !st.Mode().IsRegular() {
+		return errors.New("only regular files can be edited")
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(p), ".vibecode-edit-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	keepTemp := true
+	defer func() {
+		if keepTemp {
+			_ = os.Remove(tmpName)
+		}
+	}()
+
+	if err := tmp.Chmod(st.Mode().Perm()); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(content); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, p); err != nil {
+		return err
+	}
+	keepTemp = false
+	return nil
+}
+
+func resolveExistingInsideRoot(root, target string) (string, error) {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	rootReal, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		return "", err
+	}
+	targetReal, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return "", err
+	}
+	if targetReal != rootReal && !strings.HasPrefix(targetReal, rootReal+string(os.PathSeparator)) {
+		return "", errors.New("path escapes project root through symlink")
+	}
+	return targetReal, nil
 }
