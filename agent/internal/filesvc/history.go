@@ -150,6 +150,9 @@ func pruneHistory(dir string, keep int) error {
 		}
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(ids)))
+	if len(ids) <= keep {
+		return nil
+	}
 	for _, id := range ids[keep:] {
 		_ = os.Remove(filepath.Join(dir, id+".json"))
 		_ = os.Remove(filepath.Join(dir, id+".data"))
