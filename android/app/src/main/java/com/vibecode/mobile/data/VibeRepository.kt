@@ -27,5 +27,8 @@ class VibeRepository(private var config:MachineConfig?) {
     suspend fun files(projectId:String,path:String)=api!!.files(projectId,path)
     suspend fun readFile(projectId:String,path:String)=api!!.readFile(projectId,path)
     suspend fun writeFile(projectId:String,path:String,content:String,expectedSha256:String)=api!!.writeFile(projectId,path,content,expectedSha256)
+    suspend fun fileHistory(projectId:String,path:String)=api!!.fileHistory(projectId,path)
+    suspend fun readFileRevision(projectId:String,path:String,revisionId:String)=api!!.readFileRevision(projectId,path,revisionId)
+    suspend fun restoreFileRevision(projectId:String,path:String,revisionId:String,expectedSha256:String)=api!!.restoreFileRevision(projectId,path,revisionId,expectedSha256)
     suspend fun search(projectId:String,q:String)=api!!.search(projectId,q)
 }
