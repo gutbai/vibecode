@@ -25,6 +25,8 @@ import (
 	"github.com/gutbai/vibecode/agent/internal/session"
 )
 
+const maxEditableFileBytes int64 = 2 * 1024 * 1024
+
 type Server struct {
 	cfg      config.Config
 	sessions *session.Manager
@@ -48,6 +50,7 @@ func New(cfg config.Config, sm *session.Manager, hub *Hub) *Server {
 	mux.HandleFunc("POST /api/sessions/{id}/stop", s.auth(s.stopSession))
 	mux.HandleFunc("GET /api/projects/{id}/files", s.auth(s.listFiles))
 	mux.HandleFunc("GET /api/projects/{id}/file", s.auth(s.readFile))
+	mux.HandleFunc("PUT /api/projects/{id}/file", s.auth(s.writeFile))
 	mux.HandleFunc("GET /api/projects/{id}/search", s.auth(s.search))
 	mux.HandleFunc("GET /api/projects/{id}/git/status", s.auth(s.gitStatus))
 	mux.HandleFunc("GET /api/projects/{id}/git/diff", s.auth(s.gitDiff))
@@ -234,12 +237,33 @@ func (s *Server) readFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rel := r.URL.Query().Get("path")
-	b, err := filesvc.Read(p.Path, rel, 2*1024*1024)
+	b, err := filesvc.Read(p.Path, rel, maxEditableFileBytes)
 	if err != nil {
 		errOut(w, 400, err)
 		return
 	}
 	jsonOut(w, 200, map[string]string{"path": filepath.ToSlash(rel), "content": string(b)})
+}
+func (s *Server) writeFile(w http.ResponseWriter, r *http.Request) {
+	p, err := s.project(r.PathValue("id"))
+	if err != nil {
+		errOut(w, 404, err)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxEditableFileBytes*8)
+	var in struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		errOut(w, 400, err)
+		return
+	}
+	if err := filesvc.Write(p.Path, in.Path, []byte(in.Content), maxEditableFileBytes); err != nil {
+		errOut(w, 400, err)
+		return
+	}
+	jsonOut(w, 200, map[string]interface{}{"ok": true, "path": filepath.ToSlash(in.Path)})
 }
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	p, err := s.project(r.PathValue("id"))
@@ -291,5 +315,5 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 		if err := c.WriteJSON(e); err != nil {
 			return
 		}
-}
+	}
 }
