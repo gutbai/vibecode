@@ -39,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import com.vibecode.mobile.data.FileContentResponse
 import com.vibecode.mobile.data.FileNode
 import com.vibecode.mobile.data.SearchResult
 import com.vibecode.mobile.data.VibeRepository
@@ -56,7 +57,8 @@ fun FilesScreen(repo: VibeRepository, enabled: Boolean) {
     var nodes by remember { mutableStateOf<List<FileNode>>(emptyList()) }
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
-    var opened by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var opened by remember { mutableStateOf<FileContentResponse?>(null) }
+    var fileError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(projectId, path) {
         nodes = if (projectId.isBlank()) {
@@ -66,14 +68,28 @@ fun FilesScreen(repo: VibeRepository, enabled: Boolean) {
         }
     }
 
+    fun openRemoteFile(filePath: String) {
+        scope.launch {
+            runCatching { repo.readFile(projectId, filePath) }
+                .onSuccess {
+                    opened = it
+                    fileError = null
+                }
+                .onFailure {
+                    fileError = it.message ?: "Không thể mở file"
+                }
+        }
+    }
+
     val openedFile = opened
     if (openedFile != null) {
         FileEditor(
-            path = openedFile.first,
-            content = openedFile.second,
+            snapshot = openedFile,
             enabled = enabled,
             onBack = { opened = null },
-            onSave = { draft -> repo.writeFile(projectId, openedFile.first, draft) },
+            onSave = { draft, expectedSha256 ->
+                repo.writeFile(projectId, openedFile.path, draft, expectedSha256).sha256
+            },
         )
     } else {
         Column(
@@ -97,6 +113,7 @@ fun FilesScreen(repo: VibeRepository, enabled: Boolean) {
                             projectId = project.id
                             path = ""
                             results = emptyList()
+                            fileError = null
                         },
                         label = { Text(project.name) },
                     )
@@ -128,6 +145,15 @@ fun FilesScreen(repo: VibeRepository, enabled: Boolean) {
                 }
             }
 
+            if (fileError != null) {
+                Text(
+                    text = fileError.orEmpty(),
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
+
             if (results.isNotEmpty()) {
                 Text(
                     text = "${results.size} kết quả",
@@ -148,12 +174,7 @@ fun FilesScreen(repo: VibeRepository, enabled: Boolean) {
                                 Text(result.preview, maxLines = 2)
                             },
                             modifier = Modifier.clickable {
-                                scope.launch {
-                                    val content = runCatching {
-                                        repo.readFile(projectId, result.filePath)
-                                    }.getOrDefault("")
-                                    opened = result.filePath to content
-                                }
+                                openRemoteFile(result.filePath)
                             },
                         )
                     }
@@ -194,12 +215,7 @@ fun FilesScreen(repo: VibeRepository, enabled: Boolean) {
                             if (node.isDir) {
                                 path = node.path
                             } else {
-                                scope.launch {
-                                    val content = runCatching {
-                                        repo.readFile(projectId, node.path)
-                                    }.getOrDefault("")
-                                    opened = node.path to content
-                                }
+                                openRemoteFile(node.path)
                             }
                         },
                     )
@@ -211,17 +227,17 @@ fun FilesScreen(repo: VibeRepository, enabled: Boolean) {
 
 @Composable
 private fun FileEditor(
-    path: String,
-    content: String,
+    snapshot: FileContentResponse,
     enabled: Boolean,
     onBack: () -> Unit,
-    onSave: suspend (String) -> Unit,
+    onSave: suspend (String, String) -> String,
 ) {
     val scope = rememberCoroutineScope()
-    var original by remember(path, content) { mutableStateOf(content) }
-    var draft by remember(path, content) { mutableStateOf(content) }
-    var saving by remember(path) { mutableStateOf(false) }
-    var error by remember(path) { mutableStateOf<String?>(null) }
+    var original by remember(snapshot.path, snapshot.content) { mutableStateOf(snapshot.content) }
+    var draft by remember(snapshot.path, snapshot.content) { mutableStateOf(snapshot.content) }
+    var revision by remember(snapshot.path, snapshot.sha256) { mutableStateOf(snapshot.sha256) }
+    var saving by remember(snapshot.path) { mutableStateOf(false) }
+    var error by remember(snapshot.path) { mutableStateOf<String?>(null) }
     val dirty = draft != original
 
     Column(
@@ -238,7 +254,7 @@ private fun FileEditor(
                 Icon(Icons.Default.ArrowBack, contentDescription = "Back")
             }
             Text(
-                text = path,
+                text = snapshot.path,
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.weight(1f),
             )
@@ -248,9 +264,14 @@ private fun FileEditor(
                     scope.launch {
                         saving = true
                         error = null
-                        runCatching { onSave(draft) }
-                            .onSuccess { original = draft }
-                            .onFailure { error = it.message ?: "Không thể lưu file" }
+                        runCatching { onSave(draft, revision) }
+                            .onSuccess { newRevision ->
+                                original = draft
+                                revision = newRevision
+                            }
+                            .onFailure {
+                                error = it.message ?: "Không thể lưu file"
+                            }
                         saving = false
                     }
                 },
