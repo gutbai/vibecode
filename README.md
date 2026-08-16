@@ -26,6 +26,7 @@ The source code and coding CLIs stay on the VPS. The Android app only talks to V
 - Browse directories from Android without cloning the project to the phone.
 - Preview and edit existing UTF-8 files up to 2 MB directly on the VPS.
 - Open files for editing from either the file browser or search results, then save changes back to the remote project.
+- Each opened file carries a SHA-256 revision; stale saves are rejected if the file changed on the VPS after it was opened.
 - Remote writes are restricted to existing regular files inside configured project roots; traversal and symlink escapes are rejected.
 - Search source with `ripgrep` on the VPS and return file/line/snippet results.
 
@@ -159,6 +160,7 @@ A sample systemd unit and installer are in `deploy/`. Review the Linux username 
 - Keep Agent bound to loopback unless you have an authenticated/private network layer.
 - Uploaded files are session-scoped and written with private directory permissions.
 - Remote file editing only updates existing regular files under configured project roots and rejects traversal/symlink escapes.
+- Stale editor saves are rejected instead of silently overwriting a newer VPS-side version.
 - Android does not receive arbitrary shell execution endpoints; it can only invoke the supported session/file/search/git API.
 
 ## Repository layout
