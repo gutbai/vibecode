@@ -1,6 +1,8 @@
 package filesvc
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +12,8 @@ import (
 
 	"github.com/gutbai/vibecode/agent/internal/model"
 )
+
+var ErrContentChanged = errors.New("file changed since it was opened")
 
 func SafeJoin(root, rel string) (string, error) {
 	rootAbs, err := filepath.Abs(root)
@@ -83,7 +87,12 @@ func Read(root, rel string, maxBytes int64) ([]byte, error) {
 	return os.ReadFile(p)
 }
 
-func Write(root, rel string, content []byte, maxBytes int64) error {
+func SHA256(content []byte) string {
+	sum := sha256.Sum256(content)
+	return hex.EncodeToString(sum[:])
+}
+
+func Write(root, rel string, content []byte, maxBytes int64, expectedSHA256 string) error {
 	if strings.TrimSpace(rel) == "" {
 		return errors.New("file path is required")
 	}
@@ -109,6 +118,9 @@ func Write(root, rel string, content []byte, maxBytes int64) error {
 	}
 	if !st.Mode().IsRegular() {
 		return errors.New("only regular files can be edited")
+	}
+	if err := checkExpectedSHA256(p, expectedSHA256); err != nil {
+		return err
 	}
 
 	tmp, err := os.CreateTemp(filepath.Dir(p), ".vibecode-edit-*")
@@ -138,10 +150,27 @@ func Write(root, rel string, content []byte, maxBytes int64) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
+	if err := checkExpectedSHA256(p, expectedSHA256); err != nil {
+		return err
+	}
 	if err := os.Rename(tmpName, p); err != nil {
 		return err
 	}
 	keepTemp = false
+	return nil
+}
+
+func checkExpectedSHA256(path, expected string) error {
+	if expected == "" {
+		return nil
+	}
+	current, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(SHA256(current), expected) {
+		return ErrContentChanged
+	}
 	return nil
 }
 
