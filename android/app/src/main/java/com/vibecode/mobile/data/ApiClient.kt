@@ -22,16 +22,16 @@ class ApiClient(private val machine: MachineConfig) {
 
     private suspend inline fun <reified T> get(path:String):T = withContext(Dispatchers.IO) {
         http.newCall(req(path).get().build()).execute().use { r ->
-            val body=r.body?.string().orEmpty(); if(!r.isSuccessful) error(parseError(body)); json.decodeFromString<T>(body)
+            val body=r.body?.string().orEmpty(); if(!r.isSuccessful) throw ApiException(r.code, parseError(body)); json.decodeFromString<T>(body)
         }
     }
     private suspend inline fun <reified T,reified I> post(path:String,input:I):T = withContext(Dispatchers.IO) {
         val body=json.encodeToString(input).toRequestBody("application/json".toMediaTypeOrNull())
-        http.newCall(req(path).post(body).build()).execute().use { r -> val text=r.body?.string().orEmpty(); if(!r.isSuccessful) error(parseError(text)); json.decodeFromString<T>(text) }
+        http.newCall(req(path).post(body).build()).execute().use { r -> val text=r.body?.string().orEmpty(); if(!r.isSuccessful) throw ApiException(r.code, parseError(text)); json.decodeFromString<T>(text) }
     }
     private suspend inline fun <reified T,reified I> put(path:String,input:I):T = withContext(Dispatchers.IO) {
         val body=json.encodeToString(input).toRequestBody("application/json".toMediaTypeOrNull())
-        http.newCall(req(path).put(body).build()).execute().use { r -> val text=r.body?.string().orEmpty(); if(!r.isSuccessful) error(parseError(text)); json.decodeFromString<T>(text) }
+        http.newCall(req(path).put(body).build()).execute().use { r -> val text=r.body?.string().orEmpty(); if(!r.isSuccessful) throw ApiException(r.code, parseError(text)); json.decodeFromString<T>(text) }
     }
     private fun parseError(raw:String)=runCatching{json.decodeFromString<ServerError>(raw).error}.getOrDefault(raw.ifBlank{"Request failed"})
 
@@ -43,6 +43,12 @@ class ApiClient(private val machine: MachineConfig) {
     suspend fun readFile(projectId:String,path:String):FileContentResponse = get("/api/projects/$projectId/file?path=${enc(path)}")
     suspend fun writeFile(projectId:String,path:String,content:String,expectedSha256:String):FileWriteResponse =
         put("/api/projects/$projectId/file", FileWriteRequest(path, content, expectedSha256))
+    suspend fun fileHistory(projectId:String,path:String):List<FileRevision> =
+        get("/api/projects/$projectId/file/history?path=${enc(path)}")
+    suspend fun readFileRevision(projectId:String,path:String,revisionId:String):FileRevisionContent =
+        get("/api/projects/$projectId/file/revision?path=${enc(path)}&revisionId=${enc(revisionId)}")
+    suspend fun restoreFileRevision(projectId:String,path:String,revisionId:String,expectedSha256:String):FileWriteResponse =
+        post("/api/projects/$projectId/file/restore", FileRestoreRequest(path, revisionId, expectedSha256))
     suspend fun search(projectId:String,q:String):List<SearchResult> = get("/api/projects/$projectId/search?q=${enc(q)}&limit=200")
     suspend fun sendMessage(sessionId:String,text:String,attachments:List<Attachment>):SessionMessage =
         post("/api/sessions/$sessionId/messages", SendMessageRequest(text, attachments.map { it.id }))
@@ -60,7 +66,7 @@ class ApiClient(private val machine: MachineConfig) {
             resolver.openInputStream(uri)!!.use { input -> tmp.outputStream().use { input.copyTo(it) } }
             val multipart=MultipartBody.Builder().setType(MultipartBody.FORM)
                 .addFormDataPart("file",name,tmp.asRequestBody(mime.toMediaTypeOrNull())).build()
-            http.newCall(req("/api/sessions/$sessionId/attachments").post(multipart).build()).execute().use { r -> val text=r.body?.string().orEmpty(); if(!r.isSuccessful) error(parseError(text)); json.decodeFromString<Attachment>(text) }
+            http.newCall(req("/api/sessions/$sessionId/attachments").post(multipart).build()).execute().use { r -> val text=r.body?.string().orEmpty(); if(!r.isSuccessful) throw ApiException(r.code, parseError(text)); json.decodeFromString<Attachment>(text) }
         } finally { tmp.delete() }
     }
     fun socket(onEvent:(Event)->Unit,onClosed:(Throwable?)->Unit):WebSocket {
