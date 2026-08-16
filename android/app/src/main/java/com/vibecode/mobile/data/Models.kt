@@ -61,6 +61,7 @@ data class MachineConfig(val id:String,val name:String,val baseUrl:String,val to
 
 @Serializable data class CreateSessionRequest(val provider:String,val projectId:String,val title:String,val prompt:String)
 @Serializable data class SendMessageRequest(val text:String,val attachmentIds:List<String>)
-@Serializable data class FileContentResponse(val path:String,val content:String)
-@Serializable data class FileWriteRequest(val path:String,val content:String)
+@Serializable data class FileContentResponse(val path:String,val content:String,val sha256:String="")
+@Serializable data class FileWriteRequest(val path:String,val content:String,val expectedSha256:String="")
+@Serializable data class FileWriteResponse(val ok:Boolean,val path:String="",val sha256:String="")
 @Serializable data class OkResponse(val ok:Boolean)
