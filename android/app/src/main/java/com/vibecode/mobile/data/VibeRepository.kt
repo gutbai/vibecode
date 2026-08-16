@@ -14,21 +14,81 @@ class VibeRepository(private var config:MachineConfig?) {
     private val _projects=MutableStateFlow<List<Project>>(emptyList()); val projects:StateFlow<List<Project>> = _projects
     private val _machine=MutableStateFlow<MachineInfo?>(null); val machine:StateFlow<MachineInfo?> = _machine
     private val _error=MutableStateFlow<String?>(null); val error:StateFlow<String?> = _error
+    private val _connected=MutableStateFlow(false); val connected:StateFlow<Boolean> = _connected
 
-    fun setMachine(c:MachineConfig?){ socket?.cancel(); config=c; api=c?.let(::ApiClient); _sessions.value=emptyList(); _projects.value=emptyList(); _machine.value=null }
-    suspend fun refresh(){ val a=api?:return; runCatching{coroutineScope{ val s=async{a.sessions()}; val p=async{a.projects()}; val m=async{a.machine()}; Triple(s.await(),p.await(),m.await()) }}.onSuccess{_sessions.value=it.first;_projects.value=it.second;_machine.value=it.third;_error.value=null}.onFailure{_error.value=it.message} }
-    fun connect(scope:CoroutineScope){ val a=api?:return; socket?.cancel(); socket=a.socket(onEvent={e-> if(e.type.startsWith("session.")) scope.launch{refresh()}},onClosed={}) }
-    suspend fun session(id:String)=api!!.session(id)
-    suspend fun send(id:String,text:String,attachments:List<Attachment>)=api!!.sendMessage(id,text,attachments)
-    suspend fun sendControl(id:String,vararg keys:String)=api!!.sendControl(id,keys.toList())
-    suspend fun upload(id:String,resolver:ContentResolver,uri:Uri)=api!!.upload(id,resolver,uri)
-    suspend fun stop(id:String)=api!!.stopSession(id)
-    suspend fun create(provider:String,projectId:String,title:String,prompt:String)=api!!.createSession(provider,projectId,title,prompt)
-    suspend fun files(projectId:String,path:String)=api!!.files(projectId,path)
-    suspend fun readFile(projectId:String,path:String)=api!!.readFile(projectId,path)
-    suspend fun writeFile(projectId:String,path:String,content:String,expectedSha256:String)=api!!.writeFile(projectId,path,content,expectedSha256)
-    suspend fun fileHistory(projectId:String,path:String)=api!!.fileHistory(projectId,path)
-    suspend fun readFileRevision(projectId:String,path:String,revisionId:String)=api!!.readFileRevision(projectId,path,revisionId)
-    suspend fun restoreFileRevision(projectId:String,path:String,revisionId:String,expectedSha256:String)=api!!.restoreFileRevision(projectId,path,revisionId,expectedSha256)
-    suspend fun search(projectId:String,q:String)=api!!.search(projectId,q)
+    fun setMachine(c:MachineConfig?){
+        socket?.cancel()
+        config=c
+        api=c?.let(::ApiClient)
+        _sessions.value=emptyList()
+        _projects.value=emptyList()
+        _machine.value=null
+        _connected.value=false
+        _error.value=null
+    }
+
+    suspend fun refresh(){
+        val a=api ?: run {
+            _connected.value=false
+            _error.value="Chưa chọn machine"
+            return
+        }
+        try {
+            val result=coroutineScope{
+                val s=async{a.sessions()}
+                val p=async{a.projects()}
+                val m=async{a.machine()}
+                Triple(s.await(),p.await(),m.await())
+            }
+            _sessions.value=result.first
+            _projects.value=result.second
+            _machine.value=result.third
+            _connected.value=true
+            _error.value=null
+        } catch(t:Throwable) {
+            _connected.value=false
+            _error.value=describe(t)
+        }
+    }
+
+    fun connect(scope:CoroutineScope){
+        val a=api?:return
+        socket?.cancel()
+        socket=a.socket(
+            onEvent={e-> if(e.type.startsWith("session.")) scope.launch{refresh()}},
+            onClosed={t-> if(t!=null){ _error.value=describe(t) }}
+        )
+    }
+
+    private suspend fun <T> call(block:suspend (ApiClient)->T):T {
+        val a=api ?: error("Chưa chọn machine")
+        return try {
+            block(a).also {
+                _connected.value=true
+                _error.value=null
+            }
+        } catch(t:Throwable) {
+            _error.value=describe(t)
+            throw t
+        }
+    }
+
+    private fun describe(t:Throwable):String = when(t) {
+        is ApiException -> "HTTP ${t.statusCode}: ${t.message ?: "Request failed"}"
+        else -> t.message ?: t::class.simpleName ?: "Không kết nối được Agent"
+    }
+
+    suspend fun session(id:String)=call{it.session(id)}
+    suspend fun send(id:String,text:String,attachments:List<Attachment>)=call{it.sendMessage(id,text,attachments)}
+    suspend fun sendControl(id:String,vararg keys:String)=call{it.sendControl(id,keys.toList())}
+    suspend fun upload(id:String,resolver:ContentResolver,uri:Uri)=call{it.upload(id,resolver,uri)}
+    suspend fun stop(id:String)=call{it.stopSession(id)}
+    suspend fun create(provider:String,projectId:String,title:String,prompt:String)=call{it.createSession(provider,projectId,title,prompt)}
+    suspend fun files(projectId:String,path:String)=call{it.files(projectId,path)}
+    suspend fun readFile(projectId:String,path:String)=call{it.readFile(projectId,path)}
+    suspend fun writeFile(projectId:String,path:String,content:String,expectedSha256:String)=call{it.writeFile(projectId,path,content,expectedSha256)}
+    suspend fun fileHistory(projectId:String,path:String)=call{it.fileHistory(projectId,path)}
+    suspend fun readFileRevision(projectId:String,path:String,revisionId:String)=call{it.readFileRevision(projectId,path,revisionId)}
+    suspend fun restoreFileRevision(projectId:String,path:String,revisionId:String,expectedSha256:String)=call{it.restoreFileRevision(projectId,path,revisionId,expectedSha256)}
+    suspend fun search(projectId:String,q:String)=call{it.search(projectId,q)}
 }
