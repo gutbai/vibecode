@@ -21,12 +21,13 @@ The source code and coding CLIs stay on the VPS. The Android app only talks to V
 - The agent sends the local VPS paths to Claude/Codex so the CLI can inspect them directly.
 - SHA-256, MIME type, file size and original filename are retained.
 
-### Project files and search
+### Project files, editing and search
 - Project roots are explicitly whitelisted in `config.json`.
 - Browse directories from Android without cloning the project to the phone.
-- Preview UTF-8 files up to 2 MB.
+- Preview and edit existing UTF-8 files up to 2 MB directly on the VPS.
+- Open files for editing from either the file browser or search results, then save changes back to the remote project.
+- Remote writes are restricted to existing regular files inside configured project roots; traversal and symlink escapes are rejected.
 - Search source with `ripgrep` on the VPS and return file/line/snippet results.
-- Path traversal outside configured project roots is blocked.
 
 ### Git
 The Agent exposes read-only Git endpoints for status, diff and recent history. GitHub is not in the Android/VPS runtime path; normal `git pull/push` remains on the VPS.
@@ -157,7 +158,8 @@ A sample systemd unit and installer are in `deploy/`. Review the Linux username 
 - Use a long random bearer token.
 - Keep Agent bound to loopback unless you have an authenticated/private network layer.
 - Uploaded files are session-scoped and written with private directory permissions.
-- Android does not receive shell execution endpoints in this version; it can only invoke the supported session/file/search/git API.
+- Remote file editing only updates existing regular files under configured project roots and rejects traversal/symlink escapes.
+- Android does not receive arbitrary shell execution endpoints; it can only invoke the supported session/file/search/git API.
 
 ## Repository layout
 
