@@ -29,6 +29,10 @@ class ApiClient(private val machine: MachineConfig) {
         val body=json.encodeToString(input).toRequestBody("application/json".toMediaTypeOrNull())
         http.newCall(req(path).post(body).build()).execute().use { r -> val text=r.body?.string().orEmpty(); if(!r.isSuccessful) error(parseError(text)); json.decodeFromString<T>(text) }
     }
+    private suspend inline fun <reified T,reified I> put(path:String,input:I):T = withContext(Dispatchers.IO) {
+        val body=json.encodeToString(input).toRequestBody("application/json".toMediaTypeOrNull())
+        http.newCall(req(path).put(body).build()).execute().use { r -> val text=r.body?.string().orEmpty(); if(!r.isSuccessful) error(parseError(text)); json.decodeFromString<T>(text) }
+    }
     private fun parseError(raw:String)=runCatching{json.decodeFromString<ServerError>(raw).error}.getOrDefault(raw.ifBlank{"Request failed"})
 
     suspend fun projects():List<Project> = get("/api/projects")
@@ -37,6 +41,9 @@ class ApiClient(private val machine: MachineConfig) {
     suspend fun machine():MachineInfo = get("/api/machine")
     suspend fun files(projectId:String,path:String):List<FileNode> = get("/api/projects/$projectId/files?path=${enc(path)}")
     suspend fun readFile(projectId:String,path:String):String = get<FileContentResponse>("/api/projects/$projectId/file?path=${enc(path)}").content
+    suspend fun writeFile(projectId:String,path:String,content:String) {
+        put<OkResponse,FileWriteRequest>("/api/projects/$projectId/file", FileWriteRequest(path, content))
+    }
     suspend fun search(projectId:String,q:String):List<SearchResult> = get("/api/projects/$projectId/search?q=${enc(q)}&limit=200")
     suspend fun sendMessage(sessionId:String,text:String,attachments:List<Attachment>):SessionMessage =
         post("/api/sessions/$sessionId/messages", SendMessageRequest(text, attachments.map { it.id }))
