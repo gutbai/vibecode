@@ -26,5 +26,6 @@ class VibeRepository(private var config:MachineConfig?) {
     suspend fun create(provider:String,projectId:String,title:String,prompt:String)=api!!.createSession(provider,projectId,title,prompt)
     suspend fun files(projectId:String,path:String)=api!!.files(projectId,path)
     suspend fun readFile(projectId:String,path:String)=api!!.readFile(projectId,path)
+    suspend fun writeFile(projectId:String,path:String,content:String)=api!!.writeFile(projectId,path,content)
     suspend fun search(projectId:String,q:String)=api!!.search(projectId,q)
 }
