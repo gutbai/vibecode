@@ -1,6 +1,7 @@
 package filesvc
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -18,11 +19,12 @@ func TestSafeJoinRejectsEscape(t *testing.T) {
 func TestWriteUpdatesExistingFile(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "main.go")
-	if err := os.WriteFile(path, []byte("before\n"), 0o640); err != nil {
+	before := []byte("before\n")
+	if err := os.WriteFile(path, before, 0o640); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := Write(root, "main.go", []byte("after\n"), 1024); err != nil {
+	if err := Write(root, "main.go", []byte("after\n"), 1024, SHA256(before)); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(path)
@@ -41,6 +43,30 @@ func TestWriteUpdatesExistingFile(t *testing.T) {
 	}
 }
 
+func TestWriteRejectsStaleContent(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "main.go")
+	opened := []byte("opened version\n")
+	if err := os.WriteFile(path, opened, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("changed on vps\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := Write(root, "main.go", []byte("phone edit\n"), 1024, SHA256(opened))
+	if !errors.Is(err, ErrContentChanged) {
+		t.Fatalf("expected ErrContentChanged, got %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "changed on vps\n" {
+		t.Fatalf("stale save overwrote newer content: %q", got)
+	}
+}
+
 func TestWriteRejectsTooLargeContent(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "a.txt")
@@ -48,7 +74,7 @@ func TestWriteRejectsTooLargeContent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Write(root, "a.txt", []byte(strings.Repeat("x", 11)), 10); err == nil {
+	if err := Write(root, "a.txt", []byte(strings.Repeat("x", 11)), 10, ""); err == nil {
 		t.Fatal("expected edit size limit error")
 	}
 }
@@ -68,7 +94,7 @@ func TestWriteRejectsSymlinkEscape(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Write(root, "link.txt", []byte("changed"), 1024); err == nil {
+	if err := Write(root, "link.txt", []byte("changed"), 1024, ""); err == nil {
 		t.Fatal("expected symlink escape to be rejected")
 	}
 	got, err := os.ReadFile(outsideFile)
