@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -242,7 +243,11 @@ func (s *Server) readFile(w http.ResponseWriter, r *http.Request) {
 		errOut(w, 400, err)
 		return
 	}
-	jsonOut(w, 200, map[string]string{"path": filepath.ToSlash(rel), "content": string(b)})
+	jsonOut(w, 200, map[string]string{
+		"path":   filepath.ToSlash(rel),
+		"content": string(b),
+		"sha256": filesvc.SHA256(b),
+	})
 }
 func (s *Server) writeFile(w http.ResponseWriter, r *http.Request) {
 	p, err := s.project(r.PathValue("id"))
@@ -252,18 +257,28 @@ func (s *Server) writeFile(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxEditableFileBytes*8)
 	var in struct {
-		Path    string `json:"path"`
-		Content string `json:"content"`
+		Path           string `json:"path"`
+		Content        string `json:"content"`
+		ExpectedSHA256 string `json:"expectedSha256"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		errOut(w, 400, err)
 		return
 	}
-	if err := filesvc.Write(p.Path, in.Path, []byte(in.Content), maxEditableFileBytes); err != nil {
+	content := []byte(in.Content)
+	if err := filesvc.Write(p.Path, in.Path, content, maxEditableFileBytes, in.ExpectedSHA256); err != nil {
+		if errors.Is(err, filesvc.ErrContentChanged) {
+			errOut(w, http.StatusConflict, err)
+			return
+		}
 		errOut(w, 400, err)
 		return
 	}
-	jsonOut(w, 200, map[string]interface{}{"ok": true, "path": filepath.ToSlash(in.Path)})
+	jsonOut(w, 200, map[string]interface{}{
+		"ok":     true,
+		"path":   filepath.ToSlash(in.Path),
+		"sha256": filesvc.SHA256(content),
+	})
 }
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	p, err := s.project(r.PathValue("id"))
