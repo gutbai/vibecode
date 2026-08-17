@@ -52,7 +52,7 @@ class ApiClient(private val machine: MachineConfig) {
         get("/api/projects/$projectId/file/revision?path=${enc(path)}&revisionId=${enc(revisionId)}")
     suspend fun restoreFileRevision(projectId:String,path:String,revisionId:String,expectedSha256:String):FileWriteResponse =
         post("/api/projects/$projectId/file/restore", FileRestoreRequest(path, revisionId, expectedSha256))
-    suspend fun search(projectId:String,q:String):List<SearchResult> = get("/api/projects/$projectId/search?q=${enc(q)}&limit=200")
+    suspend fun search(projectId:String,q:String):List<SearchResult> = get("/api/projects/$projectId/search?q=${enc(q)}&limit=500")
     suspend fun sendMessage(sessionId:String,text:String,attachments:List<Attachment>):SessionMessage =
         post("/api/sessions/$sessionId/messages", SendMessageRequest(text, attachments.map { it.id }))
     suspend fun sendControl(sessionId:String,keys:List<String>) {
