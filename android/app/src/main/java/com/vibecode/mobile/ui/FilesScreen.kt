@@ -10,14 +10,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -33,13 +37,22 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.vibecode.mobile.data.ApiException
 import com.vibecode.mobile.data.FileContentResponse
@@ -50,6 +63,13 @@ import com.vibecode.mobile.data.FileWriteResponse
 import com.vibecode.mobile.data.SearchResult
 import com.vibecode.mobile.data.VibeRepository
 import kotlinx.coroutines.launch
+import kotlin.math.abs
+
+private data class SearchOpenTarget(
+    val query: String,
+    val lineNumber: Int,
+    val matchCase: Boolean,
+)
 
 @Composable
 fun FilesScreen(repo: VibeRepository, enabled: Boolean) {
@@ -60,8 +80,11 @@ fun FilesScreen(repo: VibeRepository, enabled: Boolean) {
     var path by remember { mutableStateOf("") }
     var nodes by remember { mutableStateOf<List<FileNode>>(emptyList()) }
     var query by remember { mutableStateOf("") }
+    var matchCase by remember { mutableStateOf(false) }
     var results by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
+    var searching by remember { mutableStateOf(false) }
     var opened by remember { mutableStateOf<FileContentResponse?>(null) }
+    var openTarget by remember { mutableStateOf<SearchOpenTarget?>(null) }
     var fileError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(projectId, path) {
@@ -69,11 +92,31 @@ fun FilesScreen(repo: VibeRepository, enabled: Boolean) {
         else runCatching { repo.files(projectId, path) }.getOrDefault(emptyList())
     }
 
-    fun openRemoteFile(filePath: String) {
+    fun openRemoteFile(filePath: String, target: SearchOpenTarget? = null) {
         scope.launch {
             runCatching { repo.readFile(projectId, filePath) }
-                .onSuccess { opened = it; fileError = null }
+                .onSuccess {
+                    openTarget = target
+                    opened = it
+                    fileError = null
+                }
                 .onFailure { fileError = it.message ?: "Không thể mở file" }
+        }
+    }
+
+    fun runProjectSearch() {
+        val needle = query
+        if (!enabled || projectId.isBlank() || needle.isBlank()) return
+        scope.launch {
+            searching = true
+            fileError = null
+            runCatching { repo.search(projectId, needle) }
+                .onSuccess { results = it }
+                .onFailure {
+                    results = emptyList()
+                    fileError = it.message ?: "Không thể tìm kiếm"
+                }
+            searching = false
         }
     }
 
@@ -81,8 +124,12 @@ fun FilesScreen(repo: VibeRepository, enabled: Boolean) {
     if (openedFile != null) {
         FileEditor(
             snapshot = openedFile,
+            initialSearch = openTarget,
             enabled = enabled,
-            onBack = { opened = null },
+            onBack = {
+                opened = null
+                openTarget = null
+            },
             onSave = { draft, expectedSha256 ->
                 repo.writeFile(projectId, openedFile.path, draft, expectedSha256).sha256
             },
@@ -94,6 +141,14 @@ fun FilesScreen(repo: VibeRepository, enabled: Boolean) {
             },
         )
         return
+    }
+
+    val visibleResults = remember(results, query, matchCase) {
+        if (!matchCase || query.isBlank()) results
+        else results.filter { literalMatchRanges(it.preview, query, matchCase = true).isNotEmpty() }
+    }
+    val totalMatches = remember(visibleResults, query, matchCase) {
+        visibleResults.sumOf { literalMatchRanges(it.preview, query, matchCase).size }
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
@@ -119,23 +174,37 @@ fun FilesScreen(repo: VibeRepository, enabled: Boolean) {
         }
 
         Spacer(Modifier.height(8.dp))
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("Tìm nội dung trong project") },
+                placeholder = { Text("Tìm literal trong project") },
                 singleLine = true,
             )
+            FilterChip(
+                selected = matchCase,
+                onClick = { matchCase = !matchCase },
+                label = { Text("Aa") },
+            )
             IconButton(
-                enabled = enabled && projectId.isNotBlank() && query.isNotBlank(),
-                onClick = {
-                    scope.launch {
-                        results = runCatching { repo.search(projectId, query) }.getOrDefault(emptyList())
-                    }
-                },
-            ) { Icon(Icons.Default.Search, contentDescription = "Search") }
+                enabled = enabled && projectId.isNotBlank() && query.isNotBlank() && !searching,
+                onClick = { runProjectSearch() },
+            ) {
+                Icon(Icons.Default.Search, contentDescription = "Search")
+            }
         }
+
+        Text(
+            text = if (matchCase) "Literal · Aa: phân biệt hoa/thường" else "Literal · không phân biệt hoa/thường",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp),
+        )
 
         if (fileError != null) {
             Text(
@@ -146,15 +215,39 @@ fun FilesScreen(repo: VibeRepository, enabled: Boolean) {
             )
         }
 
-        if (results.isNotEmpty()) {
-            Text("${results.size} kết quả", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 8.dp))
-            LazyColumn(modifier = Modifier.fillMaxWidth().weight(0.45f)) {
-                items(results) { result ->
-                    ListItem(
-                        headlineContent = { Text("${result.filePath}:${result.lineNumber}") },
-                        supportingContent = { Text(result.preview, maxLines = 2) },
-                        modifier = Modifier.clickable { openRemoteFile(result.filePath) },
-                    )
+        if (results.isNotEmpty() || searching) {
+            Text(
+                text = if (searching) "Đang tìm..." else "$totalMatches match · ${visibleResults.size} dòng",
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+            if (!searching && visibleResults.isEmpty()) {
+                Text(
+                    text = "Không có kết quả đúng chế độ Aa hiện tại.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 8.dp),
+                )
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxWidth().weight(0.45f)) {
+                    items(visibleResults) { result ->
+                        ListItem(
+                            headlineContent = { Text("${result.filePath}:${result.lineNumber}") },
+                            supportingContent = {
+                                HighlightedPreview(
+                                    text = result.preview,
+                                    query = query,
+                                    matchCase = matchCase,
+                                )
+                            },
+                            modifier = Modifier.clickable {
+                                openRemoteFile(
+                                    result.filePath,
+                                    SearchOpenTarget(query, result.lineNumber, matchCase),
+                                )
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -178,7 +271,11 @@ fun FilesScreen(repo: VibeRepository, enabled: Boolean) {
                     headlineContent = { Text(node.name) },
                     supportingContent = { if (!node.isDir) Text("${node.size} bytes") },
                     modifier = Modifier.clickable {
-                        if (node.isDir) path = node.path else openRemoteFile(node.path)
+                        if (node.isDir) {
+                            path = node.path
+                        } else {
+                            openRemoteFile(node.path)
+                        }
                     },
                 )
             }
@@ -187,8 +284,30 @@ fun FilesScreen(repo: VibeRepository, enabled: Boolean) {
 }
 
 @Composable
+private fun HighlightedPreview(text: String, query: String, matchCase: Boolean) {
+    val ranges = remember(text, query, matchCase) { literalMatchRanges(text, query, matchCase) }
+    val background = MaterialTheme.colorScheme.secondaryContainer
+    val foreground = MaterialTheme.colorScheme.onSecondaryContainer
+    val annotated = remember(text, ranges, background, foreground) {
+        buildAnnotatedString {
+            var cursor = 0
+            ranges.forEach { range ->
+                if (range.first > cursor) append(text.substring(cursor, range.first))
+                withStyle(SpanStyle(background = background, color = foreground)) {
+                    append(text.substring(range.first, range.last + 1))
+                }
+                cursor = range.last + 1
+            }
+            if (cursor < text.length) append(text.substring(cursor))
+        }
+    }
+    Text(annotated, maxLines = 2)
+}
+
+@Composable
 private fun FileEditor(
     snapshot: FileContentResponse,
+    initialSearch: SearchOpenTarget?,
     enabled: Boolean,
     onBack: () -> Unit,
     onSave: suspend (String, String) -> String,
@@ -198,8 +317,10 @@ private fun FileEditor(
     onRestore: suspend (String, String) -> FileWriteResponse,
 ) {
     val scope = rememberCoroutineScope()
+    val editorFocus = remember { FocusRequester() }
+
     var original by remember(snapshot.path, snapshot.content) { mutableStateOf(snapshot.content) }
-    var draft by remember(snapshot.path, snapshot.content) { mutableStateOf(snapshot.content) }
+    var editorValue by remember(snapshot.path, snapshot.content) { mutableStateOf(TextFieldValue(snapshot.content)) }
     var revision by remember(snapshot.path, snapshot.sha256) { mutableStateOf(snapshot.sha256) }
     var busy by remember(snapshot.path) { mutableStateOf(false) }
     var error by remember(snapshot.path) { mutableStateOf<String?>(null) }
@@ -209,14 +330,60 @@ private fun FileEditor(
     var historyPreview by remember(snapshot.path) { mutableStateOf<FileRevisionContent?>(null) }
     var conflictLatest by remember(snapshot.path) { mutableStateOf<FileContentResponse?>(null) }
     var diffBase by remember(snapshot.path) { mutableStateOf(snapshot.content) }
+
+    var findQuery by remember(snapshot.path, initialSearch?.query) { mutableStateOf(initialSearch?.query.orEmpty()) }
+    var findMatchCase by remember(snapshot.path, initialSearch?.matchCase) { mutableStateOf(initialSearch?.matchCase ?: false) }
+    var currentMatch by remember(snapshot.path) { mutableIntStateOf(0) }
+
+    val draft = editorValue.text
     val dirty = draft != original
+    val matches = remember(draft, findQuery, findMatchCase) {
+        literalMatchRanges(draft, findQuery, findMatchCase)
+    }
+
+    fun selectMatch(index: Int) {
+        if (matches.isEmpty()) return
+        val normalized = ((index % matches.size) + matches.size) % matches.size
+        val range = matches[normalized]
+        currentMatch = normalized
+        editorValue = editorValue.copy(selection = TextRange(range.first, range.last + 1))
+    }
+
+    LaunchedEffect(snapshot.path, initialSearch?.query, initialSearch?.lineNumber, initialSearch?.matchCase) {
+        val target = initialSearch ?: return@LaunchedEffect
+        val found = literalMatchRanges(editorValue.text, target.query, target.matchCase)
+        if (found.isNotEmpty()) {
+            val targetOffset = offsetForLine(editorValue.text, target.lineNumber)
+            val nearest = found.indices.minByOrNull { abs(found[it].first - targetOffset) } ?: 0
+            currentMatch = nearest
+            val range = found[nearest]
+            editorValue = editorValue.copy(selection = TextRange(range.first, range.last + 1))
+            runCatching { editorFocus.requestFocus() }
+        }
+    }
+
+    LaunchedEffect(findQuery, findMatchCase) {
+        currentMatch = 0
+        if (matches.isNotEmpty()) {
+            val range = matches.first()
+            editorValue = editorValue.copy(selection = TextRange(range.first, range.last + 1))
+        }
+    }
+
+    LaunchedEffect(matches.size) {
+        if (matches.isEmpty()) currentMatch = 0
+        else if (currentMatch >= matches.size) currentMatch = matches.lastIndex
+    }
 
     fun loadHistory() {
         scope.launch {
             busy = true
             error = null
             runCatching { onHistory() }
-                .onSuccess { history = it; mode = "history" }
+                .onSuccess {
+                    history = it
+                    mode = "history"
+                }
                 .onFailure { error = it.message ?: "Không thể tải history" }
             busy = false
         }
@@ -227,11 +394,11 @@ private fun FileEditor(
             busy = true
             error = null
             notice = null
-            runCatching { onSave(draft, revision) }
+            runCatching { onSave(editorValue.text, revision) }
                 .onSuccess { newRevision ->
-                    original = draft
+                    original = editorValue.text
                     revision = newRevision
-                    diffBase = draft
+                    diffBase = editorValue.text
                     conflictLatest = null
                     notice = "Đã lưu lên VPS"
                 }
@@ -253,6 +420,8 @@ private fun FileEditor(
         }
     }
 
+    val currentLine = if (matches.isNotEmpty()) lineForOffset(draft, matches[currentMatch.coerceIn(0, matches.lastIndex)].first) else 0
+
     Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -271,6 +440,40 @@ private fun FileEditor(
             }
         }
 
+        if (mode == "edit") {
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                OutlinedTextField(
+                    value = findQuery,
+                    onValueChange = { findQuery = it },
+                    modifier = Modifier.width(190.dp),
+                    singleLine = true,
+                    placeholder = { Text("Find in file") },
+                )
+                FilterChip(
+                    selected = findMatchCase,
+                    onClick = { findMatchCase = !findMatchCase },
+                    label = { Text("Aa") },
+                )
+                Text(
+                    text = if (matches.isEmpty()) "0/0" else "${currentMatch + 1}/${matches.size} · L$currentLine",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                IconButton(enabled = matches.isNotEmpty(), onClick = { selectMatch(currentMatch - 1) }) {
+                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Previous match")
+                }
+                IconButton(enabled = matches.isNotEmpty(), onClick = { selectMatch(currentMatch + 1) }) {
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Next match")
+                }
+                IconButton(enabled = findQuery.isNotEmpty(), onClick = { findQuery = "" }) {
+                    Icon(Icons.Default.Close, contentDescription = "Clear search")
+                }
+            }
+        }
+
         val latest = conflictLatest
         if (latest != null) {
             Card(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
@@ -284,7 +487,7 @@ private fun FileEditor(
                         TextButton(onClick = { diffBase = latest.content; mode = "diff" }) { Text("Diff với VPS") }
                         TextButton(onClick = {
                             original = latest.content
-                            draft = latest.content
+                            editorValue = TextFieldValue(latest.content)
                             revision = latest.sha256
                             diffBase = latest.content
                             conflictLatest = null
@@ -318,7 +521,7 @@ private fun FileEditor(
 
         when (mode) {
             "diff" -> {
-                val diff = buildUnifiedDiff(diffBase, draft)
+                val diff = buildUnifiedDiff(diffBase, editorValue.text)
                 Card(modifier = Modifier.fillMaxWidth().weight(1f)) {
                     LazyColumn(modifier = Modifier.padding(10.dp)) {
                         item {
@@ -331,6 +534,7 @@ private fun FileEditor(
                     }
                 }
             }
+
             "history" -> {
                 Column(modifier = Modifier.fillMaxWidth().weight(1f)) {
                     if (history.isEmpty()) {
@@ -361,7 +565,7 @@ private fun FileEditor(
                                             runCatching { onRestore(revisionId, revision) }
                                                 .onSuccess { restored ->
                                                     original = restored.content
-                                                    draft = restored.content
+                                                    editorValue = TextFieldValue(restored.content)
                                                     revision = restored.sha256
                                                     diffBase = restored.content
                                                     historyPreview = null
@@ -405,18 +609,61 @@ private fun FileEditor(
                     }
                 }
             }
+
             else -> {
                 OutlinedTextField(
-                    value = draft,
-                    onValueChange = { draft = it; error = null; notice = null },
+                    value = editorValue,
+                    onValueChange = {
+                        editorValue = it
+                        error = null
+                        notice = null
+                    },
                     enabled = enabled && !busy,
-                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .focusRequester(editorFocus),
                     textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                     label = { Text("Remote file") },
                 )
             }
         }
     }
+}
+
+private fun literalMatchRanges(text: String, query: String, matchCase: Boolean): List<IntRange> {
+    if (query.isEmpty() || text.isEmpty()) return emptyList()
+    val out = ArrayList<IntRange>()
+    var start = 0
+    while (start <= text.length - query.length) {
+        val index = text.indexOf(query, startIndex = start, ignoreCase = !matchCase)
+        if (index < 0) break
+        out += index until (index + query.length)
+        start = index + query.length.coerceAtLeast(1)
+    }
+    return out
+}
+
+private fun offsetForLine(text: String, lineNumber: Int): Int {
+    if (lineNumber <= 1) return 0
+    var line = 1
+    for (index in text.indices) {
+        if (text[index] == '\n') {
+            line++
+            if (line == lineNumber) return index + 1
+        }
+    }
+    return text.length
+}
+
+private fun lineForOffset(text: String, offset: Int): Int {
+    if (offset <= 0) return 1
+    var line = 1
+    val end = offset.coerceAtMost(text.length)
+    for (index in 0 until end) {
+        if (text[index] == '\n') line++
+    }
+    return line
 }
 
 private fun buildUnifiedDiff(base: String, changed: String, maxLines: Int = 300): String {
@@ -439,13 +686,17 @@ private fun buildUnifiedDiff(base: String, changed: String, maxLines: Int = 300)
     while (i < a.size || j < b.size) {
         when {
             i < a.size && j < b.size && a[i] == b[j] -> {
-                out.append("  ").append(a[i]).append('\n'); i++; j++
+                out.append("  ").append(a[i]).append('\n')
+                i++
+                j++
             }
             j < b.size && (i == a.size || dp[i][j + 1] >= dp[i + 1][j]) -> {
-                out.append("+ ").append(b[j]).append('\n'); j++
+                out.append("+ ").append(b[j]).append('\n')
+                j++
             }
             i < a.size -> {
-                out.append("- ").append(a[i]).append('\n'); i++
+                out.append("- ").append(a[i]).append('\n')
+                i++
             }
         }
     }
