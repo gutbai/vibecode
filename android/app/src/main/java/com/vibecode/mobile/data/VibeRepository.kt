@@ -27,4 +27,5 @@ class VibeRepository(private var config:MachineConfig?) {
     suspend fun files(projectId:String,path:String)=api!!.files(projectId,path)
     suspend fun readFile(projectId:String,path:String)=api!!.readFile(projectId,path)
     suspend fun search(projectId:String,q:String)=api!!.search(projectId,q)
+    suspend fun slash(projectId:String,provider:String)=api!!.slash(projectId,provider)
 }
