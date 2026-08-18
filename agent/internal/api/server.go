@@ -23,6 +23,7 @@ import (
 	"github.com/gutbai/vibecode/agent/internal/model"
 	"github.com/gutbai/vibecode/agent/internal/searchsvc"
 	"github.com/gutbai/vibecode/agent/internal/session"
+	"github.com/gutbai/vibecode/agent/internal/slashsvc"
 )
 
 type Server struct {
@@ -49,6 +50,7 @@ func New(cfg config.Config, sm *session.Manager, hub *Hub) *Server {
 	mux.HandleFunc("GET /api/projects/{id}/files", s.auth(s.listFiles))
 	mux.HandleFunc("GET /api/projects/{id}/file", s.auth(s.readFile))
 	mux.HandleFunc("GET /api/projects/{id}/search", s.auth(s.search))
+	mux.HandleFunc("GET /api/projects/{id}/slash", s.auth(s.slash))
 	mux.HandleFunc("GET /api/projects/{id}/git/status", s.auth(s.gitStatus))
 	mux.HandleFunc("GET /api/projects/{id}/git/diff", s.auth(s.gitDiff))
 	mux.HandleFunc("GET /api/projects/{id}/git/log", s.auth(s.gitLog))
@@ -255,6 +257,19 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonOut(w, 200, v)
 }
+func (s *Server) slash(w http.ResponseWriter, r *http.Request) {
+	p, err := s.project(r.PathValue("id"))
+	if err != nil {
+		errOut(w, 404, err)
+		return
+	}
+	provider := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("provider")))
+	if _, ok := s.cfg.Providers[provider]; !ok {
+		errOut(w, 400, fmt.Errorf("unknown provider %q", provider))
+		return
+	}
+	jsonOut(w, 200, slashsvc.List(provider, p.Path))
+}
 func (s *Server) gitStatus(w http.ResponseWriter, r *http.Request) { s.gitCommand(w, r, gitsvc.Status) }
 func (s *Server) gitDiff(w http.ResponseWriter, r *http.Request)   { s.gitCommand(w, r, gitsvc.Diff) }
 func (s *Server) gitLog(w http.ResponseWriter, r *http.Request)    { s.gitCommand(w, r, gitsvc.Log) }
@@ -291,5 +306,6 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 		if err := c.WriteJSON(e); err != nil {
 			return
 		}
+	}
 }
 }
