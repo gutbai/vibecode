@@ -1,24 +1,25 @@
 # VibeCode
 
-VibeCode is a lightweight Android remote-control client plus a Go agent for managing Claude Code and Codex sessions running on VPS/PC machines.
+VibeCode is a lightweight Android remote-control client plus a Go agent for managing Claude Code, Codex and Grok sessions running on VPS/PC machines.
 
 The source code and coding CLIs stay on the VPS. The Android app only talks to VibeCode Agent over HTTPS/WebSocket.
 
 ## What is implemented
 
 ### Sessions
-- Start Claude Code or Codex inside isolated `tmux` sessions.
+- Start Claude Code, Codex or Grok inside isolated `tmux` sessions.
 - Sessions survive Android disconnects and can still be attached to manually over SSH.
 - States: `STARTING`, `RUNNING`, `WAITING_INPUT`, `DONE`, `ERROR`, `STOPPED`, `DISCONNECTED`.
 - Live output polling from `tmux capture-pane` and WebSocket status/output events.
 - Send text input back to a running session.
 - Persistent session/message metadata in `~/.vibecode/state.json`.
+- Session titles are derived automatically from the first meaningful prompt instead of requiring a title when the session is created.
 
 ### Attachments
 - Android system document picker for images and arbitrary files.
 - Clipboard URI paste button for copied images/files when Android exposes a content URI.
 - Files upload to the VPS and are stored under `~/.vibecode/sessions/<session>/attachments/`.
-- The agent sends the local VPS paths to Claude/Codex so the CLI can inspect them directly.
+- The agent sends the local VPS paths to the selected coding CLI so it can inspect them directly.
 - SHA-256, MIME type, file size and original filename are retained.
 
 ### Project files and search
@@ -47,6 +48,7 @@ VibeCode Agent (Go)
         |
         +-- tmux -> Claude Code
         +-- tmux -> Codex
+        +-- tmux -> Grok
         +-- filesystem
         +-- ripgrep
         +-- git
@@ -59,7 +61,7 @@ VibeCode Agent (Go)
 - `tmux`
 - `ripgrep` (`rg`)
 - `git`
-- Claude Code and/or Codex CLI already installed/authenticated for the service user
+- Claude Code, Codex and/or Grok CLI installed/authenticated for the service user
 
 ## Agent quick start
 
@@ -113,7 +115,7 @@ phone file/content URI
 SessionMessage
       |
       v
-tmux send-keys -> Claude/Codex
+tmux send-keys -> Claude/Codex/Grok
 ```
 
 A message sent with files is converted to terminal input similar to:
@@ -145,7 +147,7 @@ Events currently include:
 
 ## Status detection
 
-The first implementation uses process existence plus terminal-output heuristics. Provider-specific adapters are intentionally isolated so Claude/Codex-specific structured hooks can replace heuristics later without changing the Android protocol.
+The first implementation uses process existence plus terminal-output heuristics. Provider-specific adapters are intentionally isolated so Claude/Codex/Grok-specific structured hooks can replace heuristics later without changing the Android protocol.
 
 ## Deployment
 
