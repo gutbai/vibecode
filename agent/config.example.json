@@ -9,6 +9,7 @@
   ],
   "providers": {
     "claude": {"command": "claude", "args": []},
-    "codex": {"command": "codex", "args": []}
+    "codex": {"command": "codex", "args": []},
+    "grok": {"command": "grok", "args": []}
   }
 }
