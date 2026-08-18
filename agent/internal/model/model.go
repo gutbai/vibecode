@@ -85,3 +85,9 @@ type SearchResult struct {
 	LineNumber int    `json:"lineNumber"`
 	Preview    string `json:"preview"`
 }
+
+type SlashItem struct {
+	Command     string `json:"command"`
+	Description string `json:"description"`
+	Kind        string `json:"kind"`
+}
