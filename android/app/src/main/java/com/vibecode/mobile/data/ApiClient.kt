@@ -38,6 +38,7 @@ class ApiClient(private val machine: MachineConfig) {
     suspend fun files(projectId:String,path:String):List<FileNode> = get("/api/projects/$projectId/files?path=${enc(path)}")
     suspend fun readFile(projectId:String,path:String):String = get<FileContentResponse>("/api/projects/$projectId/file?path=${enc(path)}").content
     suspend fun search(projectId:String,q:String):List<SearchResult> = get("/api/projects/$projectId/search?q=${enc(q)}&limit=200")
+    suspend fun slash(projectId:String,provider:String):List<SlashItem> = get("/api/projects/$projectId/slash?provider=${enc(provider)}")
     suspend fun sendMessage(sessionId:String,text:String,attachments:List<Attachment>):SessionMessage =
         post("/api/sessions/$sessionId/messages", SendMessageRequest(text, attachments.map { it.id }))
     suspend fun sendControl(sessionId:String,keys:List<String>) {
