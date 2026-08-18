@@ -164,10 +164,11 @@ create_config() {
     return
   fi
 
-  local token claude_cmd codex_cmd repo_path
+  local token claude_cmd codex_cmd grok_cmd repo_path
   token="$(openssl rand -hex 32)"
   claude_cmd="$(find_user_command claude)"
   codex_cmd="$(find_user_command codex)"
+  grok_cmd="$(find_user_command grok)"
 
   if [[ -z "${claude_cmd}" ]]; then
     claude_cmd="claude"
@@ -176,6 +177,10 @@ create_config() {
   if [[ -z "${codex_cmd}" ]]; then
     codex_cmd="codex"
     warn "Codex CLI was not found for ${TARGET_USER}. Install/login to it before starting Codex sessions."
+  fi
+  if [[ -z "${grok_cmd}" ]]; then
+    grok_cmd="grok"
+    warn "Grok CLI was not found for ${TARGET_USER}. Install/login to it before starting Grok sessions."
   fi
 
   repo_path="$(realpath "${REPO_ROOT}")"
@@ -190,6 +195,7 @@ create_config() {
     --arg projectPath "${repo_path}" \
     --arg claude "${claude_cmd}" \
     --arg codex "${codex_cmd}" \
+    --arg grok "${grok_cmd}" \
     '{
       listen: $listen,
       token: $token,
@@ -200,7 +206,8 @@ create_config() {
       ],
       providers: {
         claude: {command: $claude, args: []},
-        codex: {command: $codex, args: []}
+        codex: {command: $codex, args: []},
+        grok: {command: $grok, args: []}
       }
     }' | ${SUDO} tee "${CONFIG_FILE}" >/dev/null
 
