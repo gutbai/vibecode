@@ -6,6 +6,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
+// CI build marker only; no runtime behavior change.
 private val DarkColors = darkColorScheme(
     background = Color(0xFF090D16),
     surface = Color(0xFF111827),
