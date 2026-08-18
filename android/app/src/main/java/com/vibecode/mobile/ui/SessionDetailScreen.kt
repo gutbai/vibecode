@@ -45,6 +45,7 @@ fun SessionDetailScreen(repo: VibeRepository, id: String, onBack: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     var actionError by remember { mutableStateOf<String?>(null) }
     var controlsExpanded by remember { mutableStateOf(false) }
+    var remoteSlash by remember { mutableStateOf<List<SlashItem>>(emptyList()) }
 
     suspend fun refresh() {
         session = runCatching { repo.session(id) }.getOrNull()
@@ -109,8 +110,18 @@ fun SessionDetailScreen(repo: VibeRepository, id: String, onBack: () -> Unit) {
     }
 
     val provider = session?.provider.orEmpty()
-    val slashSuggestions = remember(text, provider) {
-        slashSuggestionsFor(provider, text)
+    val projectId = session?.projectId.orEmpty()
+
+    LaunchedEffect(provider, projectId) {
+        remoteSlash = if (provider.isNotBlank() && projectId.isNotBlank()) {
+            runCatching { repo.slash(projectId, provider) }.getOrDefault(emptyList())
+        } else {
+            emptyList()
+        }
+    }
+
+    val slashSuggestions = remember(text, provider, remoteSlash) {
+        slashSuggestionsFor(provider, text, remoteSlash)
     }
 
     Scaffold(
@@ -289,7 +300,7 @@ fun SessionDetailScreen(repo: VibeRepository, id: String, onBack: () -> Unit) {
                     placeholder = { Text("Nhập lệnh hoặc prompt…") },
                     supportingText = {
                         Text(
-                            text = "Gõ / để mở command palette",
+                            text = "Gõ / để xem command + skill",
                             fontFamily = FontFamily.Monospace,
                         )
                     },
@@ -448,7 +459,7 @@ private fun SlashSuggestionPanel(
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
             )
-            suggestions.take(7).forEach { suggestion ->
+            suggestions.take(9).forEach { suggestion ->
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -482,11 +493,15 @@ private fun SlashSuggestionPanel(
     }
 }
 
-private fun slashSuggestionsFor(provider: String, input: String): List<SlashSuggestion> {
+private fun slashSuggestionsFor(
+    provider: String,
+    input: String,
+    discovered: List<SlashItem>,
+): List<SlashSuggestion> {
     val trimmed = input.trimStart()
     if (!trimmed.startsWith("/")) return emptyList()
     val query = trimmed.substringBefore(' ').lowercase()
-    val all = when (provider.lowercase()) {
+    val fallback = when (provider.lowercase()) {
         "codex" -> listOf(
             SlashSuggestion("/model", "Đổi model và reasoning effort"),
             SlashSuggestion("/permissions", "Chọn quyền chạy tool"),
@@ -522,6 +537,18 @@ private fun slashSuggestionsFor(provider: String, input: String): List<SlashSugg
             SlashSuggestion("/rename", "Đổi hoặc tự sinh tên session"),
         )
     }
+    val all = if (discovered.isNotEmpty()) {
+        discovered.map { SlashSuggestion(it.command, it.description, it.kind) }
+    } else {
+        fallback
+    }
     if (query == "/") return all
-    return all.filter { it.command.lowercase().startsWith(query) }
+    val needle = query.removePrefix("/")
+    return all.filter { suggestion ->
+        suggestion.command
+            .lowercase()
+            .removePrefix("/")
+            .removePrefix("$")
+            .startsWith(needle)
+    }
 }
