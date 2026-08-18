@@ -32,6 +32,8 @@ fun MachinesScreen(
         }
         Text("Các VPS/PC chạy VibeCode Agent")
         Spacer(Modifier.height(12.dp))
+        AppUpdateCard()
+        Spacer(Modifier.height(12.dp))
         LazyColumn(verticalArrangement=Arrangement.spacedBy(8.dp)){
             items(items,key={it.id}){m->
                 ElevatedCard(Modifier.fillMaxWidth().clickable{onSelect(m)}){
