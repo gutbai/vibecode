@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/gutbai/vibecode/agent/internal/model"
@@ -46,6 +47,17 @@ func Load(path string) (Config, error) {
 	}
 	if len(c.Projects) == 0 {
 		return Config{}, errors.New("at least one project must be configured")
+	}
+	if c.Providers == nil {
+		c.Providers = map[string]Provider{}
+	}
+	// Older VibeCode configs were created before Grok support existed. If the
+	// CLI is already installed, expose it automatically without forcing users
+	// to rewrite their existing config file.
+	if _, exists := c.Providers["grok"]; !exists {
+		if command, lookErr := exec.LookPath("grok"); lookErr == nil {
+			c.Providers["grok"] = Provider{Command: command}
+		}
 	}
 	if len(c.Providers) == 0 {
 		return Config{}, errors.New("at least one provider must be configured")
