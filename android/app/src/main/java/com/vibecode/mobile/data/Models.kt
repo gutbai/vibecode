@@ -50,6 +50,8 @@ data class FileNode(val name:String,val path:String,val isDir:Boolean,val size:L
 @Serializable
 data class SearchResult(val filePath:String,val lineNumber:Int,val preview:String)
 @Serializable
+data class SlashItem(val command:String,val description:String="",val kind:String="COMMAND")
+@Serializable
 data class MachineInfo(val name:String,val os:String,val arch:String,val cpus:Int,val memoryTotalKb:Long=0,val memoryAvailableKb:Long=0)
 @Serializable
 data class ServerError(val error:String="Unknown error")
