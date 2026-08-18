@@ -20,8 +20,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -33,6 +36,13 @@ private data class SlashSuggestion(
     val description: String,
     val kind: String = "COMMAND",
 )
+
+private data class TerminalChoice(
+    val number: Int,
+    val label: String,
+)
+
+private val terminalChoiceRegex = Regex("""^\s*(?:[❯›>•○●]\s*)?(\d{1,2})[.)]\s+(.+?)\s*$""")
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -46,6 +56,7 @@ fun SessionDetailScreen(repo: VibeRepository, id: String, onBack: () -> Unit) {
     var actionError by remember { mutableStateOf<String?>(null) }
     var controlsExpanded by remember { mutableStateOf(false) }
     var remoteSlash by remember { mutableStateOf<List<SlashItem>>(emptyList()) }
+    var terminalInputOption by remember { mutableStateOf<Int?>(null) }
 
     suspend fun refresh() {
         session = runCatching { repo.session(id) }.getOrNull()
@@ -54,7 +65,7 @@ fun SessionDetailScreen(repo: VibeRepository, id: String, onBack: () -> Unit) {
     LaunchedEffect(id) {
         while (true) {
             refresh()
-            kotlinx.coroutines.delay(1500)
+            kotlinx.coroutines.delay(1200)
         }
     }
 
@@ -72,12 +83,13 @@ fun SessionDetailScreen(repo: VibeRepository, id: String, onBack: () -> Unit) {
         }
     }
 
-    fun sendQuickInput(value: String) {
+    fun sendQuickInput(value: String, afterSend: (() -> Unit)? = null) {
         if (busy) return
         scope.launch {
             busy = true
             actionError = null
             runCatching { repo.send(id, value, emptyList()) }
+                .onSuccess { afterSend?.invoke() }
                 .onFailure { actionError = it.message }
             refresh()
             busy = false
@@ -115,9 +127,7 @@ fun SessionDetailScreen(repo: VibeRepository, id: String, onBack: () -> Unit) {
     LaunchedEffect(provider, projectId) {
         remoteSlash = if (provider.isNotBlank() && projectId.isNotBlank()) {
             runCatching { repo.slash(projectId, provider) }.getOrDefault(emptyList())
-        } else {
-            emptyList()
-        }
+        } else emptyList()
     }
 
     val slashSuggestions = remember(text, provider, remoteSlash) {
@@ -129,30 +139,26 @@ fun SessionDetailScreen(repo: VibeRepository, id: String, onBack: () -> Unit) {
             TopAppBar(
                 title = {
                     Column {
-                        Text(session?.title?.ifBlank { "New session" } ?: "Session")
+                        Text(session?.title?.ifBlank { "New session" } ?: "Session", maxLines = 1)
                         session?.let {
                             Text(
                                 text = "${providerDisplayName(it.provider)} · ${it.projectName}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontFamily = FontFamily.Monospace,
+                                maxLines = 1,
                             )
                         }
                     }
                 },
-                navigationIcon = {
-                    IconButton(onBack) { Icon(Icons.Default.ArrowBack, null) }
-                },
+                navigationIcon = { IconButton(onBack) { Icon(Icons.Default.ArrowBack, null) } },
                 actions = {
                     IconButton(onClick = {
                         scope.launch {
-                            runCatching { repo.stop(id) }
-                                .onFailure { actionError = it.message }
+                            runCatching { repo.stop(id) }.onFailure { actionError = it.message }
                             refresh()
                         }
-                    }) {
-                        Icon(Icons.Default.Stop, null)
-                    }
+                    }) { Icon(Icons.Default.Stop, null) }
                 },
             )
         },
@@ -160,23 +166,22 @@ fun SessionDetailScreen(repo: VibeRepository, id: String, onBack: () -> Unit) {
         Column(
             Modifier
                 .padding(pad)
-                .fillMaxSize(),
+                .fillMaxSize()
+                .navigationBarsPadding()
+                .imePadding(),
         ) {
             session?.let { s ->
                 Row(
-                    Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    AssistChip(
-                        onClick = {},
-                        label = {
-                            Text(
-                                providerDisplayName(s.provider).uppercase(),
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Bold,
-                            )
-                        },
+                    Text(
+                        text = providerDisplayName(s.provider).uppercase(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.tertiary,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
                     )
                     StatusBadge(s.status)
                 }
@@ -186,20 +191,36 @@ fun SessionDetailScreen(repo: VibeRepository, id: String, onBack: () -> Unit) {
                 Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                contentPadding = PaddingValues(vertical = 6.dp),
+                    .padding(horizontal = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(vertical = 4.dp),
             ) {
                 session?.messages?.let { msgs ->
-                    items(msgs, key = { it.id }) { m ->
-                        MessageBubble(m, session?.provider.orEmpty())
-                    }
+                    items(msgs, key = { it.id }) { m -> MessageBubble(m, provider) }
                 }
                 session?.lastOutput?.takeIf { it.isNotBlank() }?.let { out ->
                     item {
                         TerminalOutputCard(
-                            provider = session?.provider.orEmpty(),
+                            provider = provider,
                             output = out,
+                            enabled = !busy,
+                            inlineInputOption = terminalInputOption,
+                            onChoice = { choice ->
+                                if (choice.isFreeTextChoice()) {
+                                    sendQuickInput(choice.number.toString()) {
+                                        terminalInputOption = choice.number
+                                    }
+                                } else {
+                                    terminalInputOption = null
+                                    sendQuickInput(choice.number.toString())
+                                }
+                            },
+                            onInlineSubmit = { value ->
+                                if (value.isNotBlank()) {
+                                    sendQuickInput(value) { terminalInputOption = null }
+                                }
+                            },
+                            onInlineCancel = { terminalInputOption = null },
                         )
                     }
                 }
@@ -208,18 +229,10 @@ fun SessionDetailScreen(repo: VibeRepository, id: String, onBack: () -> Unit) {
             actionError?.let {
                 Text(
                     text = it,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 3.dp),
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
                 )
-            }
-
-            OutlinedButton(
-                onClick = { controlsExpanded = !controlsExpanded },
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-            ) {
-                Text(if (controlsExpanded) "⌨ Ẩn phím phụ  ▲" else "⌨ Phím phụ  ▼")
             }
 
             if (controlsExpanded) {
@@ -227,8 +240,8 @@ fun SessionDetailScreen(repo: VibeRepository, id: String, onBack: () -> Unit) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 12.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        .padding(horizontal = 10.dp, vertical = 3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
                     ControlButton("Esc", !busy) { sendControl("ESC") }
                     ControlButton("←", !busy) { sendControl("LEFT") }
@@ -237,21 +250,6 @@ fun SessionDetailScreen(repo: VibeRepository, id: String, onBack: () -> Unit) {
                     ControlButton("→", !busy) { sendControl("RIGHT") }
                     ControlButton("Enter", !busy) { sendControl("ENTER") }
                     ControlButton("Tab", !busy) { sendControl("TAB") }
-                    ControlButton("Space", !busy) { sendControl("SPACE") }
-                }
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 12.dp, vertical = 2.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    TextButton(onClick = { sendQuickInput("y") }, enabled = !busy) { Text("y") }
-                    TextButton(onClick = { sendQuickInput("n") }, enabled = !busy) { Text("n") }
-                    listOf("1", "2", "3", "4", "5").forEach { option ->
-                        TextButton(onClick = { sendQuickInput(option) }, enabled = !busy) { Text(option) }
-                    }
                 }
             }
 
@@ -259,14 +257,14 @@ fun SessionDetailScreen(repo: VibeRepository, id: String, onBack: () -> Unit) {
                 Row(
                     Modifier
                         .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        .padding(horizontal = 10.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
-                    pending.take(8).forEach {
+                    pending.take(8).forEach { attachment ->
                         InputChip(
                             selected = true,
                             onClick = {},
-                            label = { Text(it.originalName, maxLines = 1) },
+                            label = { Text(attachment.originalName, maxLines = 1) },
                             trailingIcon = { Icon(Icons.Default.AttachFile, null) },
                         )
                     }
@@ -282,49 +280,102 @@ fun SessionDetailScreen(repo: VibeRepository, id: String, onBack: () -> Unit) {
                 )
             }
 
+            TerminalComposer(
+                value = text,
+                onValueChange = { text = it },
+                busy = busy,
+                controlsExpanded = controlsExpanded,
+                hasAttachments = pending.isNotEmpty(),
+                onToggleControls = { controlsExpanded = !controlsExpanded },
+                onAttach = { picker.launch(arrayOf("*/*")) },
+                onPaste = { pasteClipboardAttachment() },
+                onSend = {
+                    scope.launch {
+                        busy = true
+                        actionError = null
+                        runCatching { repo.send(id, text, pending) }
+                            .onFailure { actionError = it.message }
+                            .onSuccess {
+                                text = ""
+                                pending = emptyList()
+                            }
+                        refresh()
+                        busy = false
+                    }
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun TerminalComposer(
+    value: String,
+    onValueChange: (String) -> Unit,
+    busy: Boolean,
+    controlsExpanded: Boolean,
+    hasAttachments: Boolean,
+    onToggleControls: () -> Unit,
+    onAttach: () -> Unit,
+    onPaste: () -> Unit,
+    onSend: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        color = Color(0xFF05080D),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Column(Modifier.padding(8.dp)) {
             Row(
-                Modifier.padding(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.Bottom,
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                IconButton(onClick = { picker.launch(arrayOf("*/*")) }) {
-                    Icon(Icons.Default.AttachFile, null)
-                }
-                IconButton(onClick = { pasteClipboardAttachment() }) {
-                    Icon(Icons.Default.ContentPaste, null)
-                }
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    modifier = Modifier.weight(1f),
-                    placeholder = { Text("Nhập lệnh hoặc prompt…") },
-                    supportingText = {
-                        Text(
-                            text = "Gõ / để xem command + skill",
-                            fontFamily = FontFamily.Monospace,
-                        )
-                    },
-                    textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace),
-                    maxLines = 5,
+                Text(
+                    text = "❯",
+                    color = MaterialTheme.colorScheme.tertiary,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(top = 16.dp),
                 )
-                FilledIconButton(
-                    onClick = {
-                        scope.launch {
-                            busy = true
-                            actionError = null
-                            runCatching { repo.send(id, text, pending) }
-                                .onFailure { actionError = it.message }
-                                .onSuccess {
-                                    text = ""
-                                    pending = emptyList()
-                                }
-                            refresh()
-                            busy = false
-                        }
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("Nhập prompt hoặc /command…") },
+                    textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace),
+                    minLines = 1,
+                    maxLines = 4,
+                    trailingIcon = {
+                        IconButton(
+                            onClick = onSend,
+                            enabled = !busy && (value.isNotBlank() || hasAttachments),
+                        ) { Icon(Icons.Default.ArrowUpward, "Send") }
                     },
-                    enabled = !busy && (text.isNotBlank() || pending.isNotEmpty()),
-                ) {
-                    Icon(Icons.Default.Send, null)
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = onAttach, enabled = !busy, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                    Icon(Icons.Default.AttachFile, null)
+                    Spacer(Modifier.width(3.dp))
+                    Text("Attach", fontFamily = FontFamily.Monospace)
+                }
+                TextButton(onClick = onPaste, enabled = !busy, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                    Icon(Icons.Default.ContentPaste, null)
+                    Spacer(Modifier.width(3.dp))
+                    Text("Paste", fontFamily = FontFamily.Monospace)
+                }
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = onToggleControls, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                    Icon(Icons.Default.Keyboard, null)
+                    Spacer(Modifier.width(3.dp))
+                    Text(if (controlsExpanded) "Ẩn phím" else "Phím phụ", fontFamily = FontFamily.Monospace)
                 }
             }
         }
@@ -336,52 +387,36 @@ private fun ControlButton(label: String, enabled: Boolean, onClick: () -> Unit) 
     OutlinedButton(
         onClick = onClick,
         enabled = enabled,
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-    ) {
-        Text(label, fontFamily = FontFamily.Monospace)
-    }
+        contentPadding = PaddingValues(horizontal = 11.dp, vertical = 7.dp),
+    ) { Text(label, fontFamily = FontFamily.Monospace) }
 }
 
 @Composable
 private fun MessageBubble(m: SessionMessage, provider: String) {
     val isUser = m.role == "USER"
-    Box(
+    Surface(
         modifier = Modifier.fillMaxWidth(),
-        contentAlignment = if (isUser) Alignment.CenterEnd else Alignment.CenterStart,
+        shape = RoundedCornerShape(10.dp),
+        color = if (isUser) Color(0xFF071827) else Color(0xFF0B0F15),
+        border = BorderStroke(
+            1.dp,
+            if (isUser) MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
+            else MaterialTheme.colorScheme.outlineVariant,
+        ),
     ) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(0.86f),
-            shape = RoundedCornerShape(
-                topStart = 14.dp,
-                topEnd = 14.dp,
-                bottomStart = if (isUser) 14.dp else 4.dp,
-                bottomEnd = if (isUser) 4.dp else 14.dp,
-            ),
-            color = if (isUser) {
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)
-            } else {
-                MaterialTheme.colorScheme.surfaceVariant
-            },
-            border = BorderStroke(
-                1.dp,
-                if (isUser) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
-                else MaterialTheme.colorScheme.outlineVariant,
-            ),
-        ) {
-            Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-                Text(
-                    text = if (isUser) "YOU" else providerDisplayName(provider).uppercase(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                )
-                if (m.text.isNotBlank()) {
-                    Spacer(Modifier.height(4.dp))
-                    Text(m.text)
-                }
+        Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+            Text(
+                text = if (isUser) "YOU  ❯" else "${providerDisplayName(provider).uppercase()}  ❯",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.widthIn(min = 62.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                if (m.text.isNotBlank()) Text(m.text, fontFamily = FontFamily.Monospace)
                 m.attachments.forEach {
-                    Spacer(Modifier.height(4.dp))
                     Text(
                         "📎 ${it.originalName}",
                         style = MaterialTheme.typography.bodySmall,
@@ -394,18 +429,37 @@ private fun MessageBubble(m: SessionMessage, provider: String) {
 }
 
 @Composable
-private fun TerminalOutputCard(provider: String, output: String) {
+private fun TerminalOutputCard(
+    provider: String,
+    output: String,
+    enabled: Boolean,
+    inlineInputOption: Int?,
+    onChoice: (TerminalChoice) -> Unit,
+    onInlineSubmit: (String) -> Unit,
+    onInlineCancel: () -> Unit,
+) {
+    var inlineText by remember(inlineInputOption) { mutableStateOf("") }
+    val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val lines = remember(output) { output.lines().takeLast(90) }
+
+    LaunchedEffect(inlineInputOption) {
+        if (inlineInputOption != null) {
+            kotlinx.coroutines.delay(120)
+            runCatching { focusRequester.requestFocus() }
+            keyboard?.show()
+        }
+    }
+
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        color = Color(0xFF05080D),
+        shape = RoundedCornerShape(10.dp),
+        color = Color(0xFF030609),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -416,24 +470,115 @@ private fun TerminalOutputCard(provider: String, output: String) {
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
                 )
-                Text(
-                    text = "●",
-                    color = MaterialTheme.colorScheme.tertiary,
-                    fontFamily = FontFamily.Monospace,
-                )
+                Text("●", color = MaterialTheme.colorScheme.tertiary)
             }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
-            SelectionContainer {
-                Text(
-                    text = output,
-                    modifier = Modifier.padding(12.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontFamily = FontFamily.Monospace,
-                )
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
+            Column(Modifier.padding(vertical = 7.dp)) {
+                lines.forEach { line ->
+                    val choice = parseTerminalChoice(line)
+                    if (choice != null) {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 6.dp, vertical = 1.dp)
+                                .clickable(enabled = enabled) { onChoice(choice) },
+                            color = if (choice.number == inlineInputOption) {
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.32f)
+                            } else Color.Transparent,
+                            shape = RoundedCornerShape(6.dp),
+                        ) {
+                            Row(
+                                Modifier.padding(horizontal = 7.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.Top,
+                            ) {
+                                Text(
+                                    text = "${choice.number}.",
+                                    color = MaterialTheme.colorScheme.tertiary,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.width(28.dp),
+                                )
+                                Text(
+                                    text = choice.label,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontFamily = FontFamily.Monospace,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Text(
+                                    text = if (choice.isFreeTextChoice()) "✎" else "↵",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontFamily = FontFamily.Monospace,
+                                )
+                            }
+                        }
+                    } else {
+                        SelectionContainer {
+                            Text(
+                                text = if (line.isEmpty()) " " else line,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 1.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontFamily = FontFamily.Monospace,
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (inlineInputOption != null) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        "❯",
+                        color = MaterialTheme.colorScheme.tertiary,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    OutlinedTextField(
+                        value = inlineText,
+                        onValueChange = { inlineText = it },
+                        modifier = Modifier.weight(1f).focusRequester(focusRequester),
+                        placeholder = { Text("Nhập câu trả lời cho option $inlineInputOption…") },
+                        textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace),
+                        singleLine = false,
+                        maxLines = 3,
+                    )
+                    IconButton(
+                        onClick = { onInlineSubmit(inlineText) },
+                        enabled = enabled && inlineText.isNotBlank(),
+                    ) { Icon(Icons.Default.ArrowUpward, "Submit") }
+                    IconButton(onClick = onInlineCancel) { Icon(Icons.Default.Close, "Cancel") }
+                }
             }
         }
     }
+}
+
+private fun parseTerminalChoice(line: String): TerminalChoice? {
+    val match = terminalChoiceRegex.matchEntire(line) ?: return null
+    val number = match.groupValues[1].toIntOrNull() ?: return null
+    val label = match.groupValues[2].trim()
+    if (label.isBlank()) return null
+    return TerminalChoice(number, label)
+}
+
+private fun TerminalChoice.isFreeTextChoice(): Boolean {
+    val s = label.lowercase()
+    return listOf(
+        "type something",
+        "something else",
+        "other",
+        "custom",
+        "enter your own",
+        "write your own",
+        "nhập nội dung",
+        "nhập câu trả lời",
+        "khác",
+    ).any { s.contains(it) }
 }
 
 @Composable
@@ -442,46 +587,37 @@ private fun SlashSuggestionPanel(
     onSelect: (SlashSuggestion) -> Unit,
 ) {
     Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp),
-        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 3.dp),
+        shape = RoundedCornerShape(10.dp),
         color = Color(0xFF080D14),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)),
-        tonalElevation = 4.dp,
     ) {
-        Column(Modifier.padding(vertical = 4.dp)) {
+        Column(Modifier.padding(vertical = 3.dp)) {
             Text(
                 text = "COMMAND PALETTE",
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.primary,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
             )
-            suggestions.take(9).forEach { suggestion ->
+            suggestions.take(8).forEach { suggestion ->
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onSelect(suggestion) }
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth().clickable { onSelect(suggestion) }.padding(horizontal = 10.dp, vertical = 7.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.Top,
                 ) {
                     Text(
                         text = suggestion.command,
-                        modifier = Modifier.widthIn(min = 82.dp),
+                        modifier = Modifier.widthIn(min = 78.dp),
                         color = MaterialTheme.colorScheme.tertiary,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    Column(modifier = Modifier.weight(1f)) {
+                    Column(Modifier.weight(1f)) {
+                        Text(suggestion.description, style = MaterialTheme.typography.bodySmall)
                         Text(
-                            text = suggestion.description,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                        Text(
-                            text = suggestion.kind,
+                            suggestion.kind,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontFamily = FontFamily.Monospace,
@@ -511,7 +647,6 @@ private fun slashSuggestionsFor(
             SlashSuggestion("/compact", "Rút gọn context hiện tại"),
             SlashSuggestion("/new", "Bắt đầu chat mới"),
             SlashSuggestion("/mcp", "Xem MCP tools"),
-            SlashSuggestion("/rename", "Đổi tên thread"),
         )
         "grok" -> listOf(
             SlashSuggestion("/help", "Xem commands và phím tắt"),
@@ -521,9 +656,7 @@ private fun slashSuggestionsFor(
             SlashSuggestion("/compact", "Rút gọn lịch sử hội thoại"),
             SlashSuggestion("/skills", "Mở danh sách skills", "SKILLS"),
             SlashSuggestion("/mcps", "Mở danh sách MCP"),
-            SlashSuggestion("/rename", "Đổi tên session"),
             SlashSuggestion("/plan", "Chuyển sang Plan mode"),
-            SlashSuggestion("/auto", "Chuyển sang Auto mode"),
         )
         else -> listOf(
             SlashSuggestion("/help", "Xem commands khả dụng"),
@@ -534,21 +667,14 @@ private fun slashSuggestionsFor(
             SlashSuggestion("/skills", "Liệt kê skills khả dụng", "SKILLS"),
             SlashSuggestion("/permissions", "Quản lý quyền tool"),
             SlashSuggestion("/resume", "Chuyển sang conversation khác"),
-            SlashSuggestion("/rename", "Đổi hoặc tự sinh tên session"),
         )
     }
     val all = if (discovered.isNotEmpty()) {
         discovered.map { SlashSuggestion(it.command, it.description, it.kind) }
-    } else {
-        fallback
-    }
+    } else fallback
     if (query == "/") return all
     val needle = query.removePrefix("/")
     return all.filter { suggestion ->
-        suggestion.command
-            .lowercase()
-            .removePrefix("/")
-            .removePrefix("$")
-            .startsWith(needle)
+        suggestion.command.lowercase().removePrefix("/").removePrefix("$").startsWith(needle)
     }
 }
