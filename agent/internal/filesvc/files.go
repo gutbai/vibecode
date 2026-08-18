@@ -1,7 +1,10 @@
 package filesvc
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -9,6 +12,8 @@ import (
 
 	"github.com/gutbai/vibecode/agent/internal/model"
 )
+
+var ErrContentChanged = errors.New("file changed since it was opened")
 
 func SafeJoin(root, rel string) (string, error) {
 	rootAbs, err := filepath.Abs(root)
@@ -80,4 +85,110 @@ func Read(root, rel string, maxBytes int64) ([]byte, error) {
 		return nil, errors.New("file too large to preview")
 	}
 	return os.ReadFile(p)
+}
+
+func SHA256(content []byte) string {
+	sum := sha256.Sum256(content)
+	return hex.EncodeToString(sum[:])
+}
+
+func Write(root, rel string, content []byte, maxBytes int64, expectedSHA256 string) error {
+	if strings.TrimSpace(rel) == "" {
+		return errors.New("file path is required")
+	}
+	if int64(len(content)) > maxBytes {
+		return fmt.Errorf("file exceeds edit limit of %d bytes", maxBytes)
+	}
+
+	p, err := SafeJoin(root, rel)
+	if err != nil {
+		return err
+	}
+	p, err = resolveExistingInsideRoot(root, p)
+	if err != nil {
+		return err
+	}
+
+	st, err := os.Stat(p)
+	if err != nil {
+		return err
+	}
+	if st.IsDir() {
+		return errors.New("path is a directory")
+	}
+	if !st.Mode().IsRegular() {
+		return errors.New("only regular files can be edited")
+	}
+	if err := checkExpectedSHA256(p, expectedSHA256); err != nil {
+		return err
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(p), ".vibecode-edit-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	keepTemp := true
+	defer func() {
+		if keepTemp {
+			_ = os.Remove(tmpName)
+		}
+	}()
+
+	if err := tmp.Chmod(st.Mode().Perm()); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(content); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := checkExpectedSHA256(p, expectedSHA256); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, p); err != nil {
+		return err
+	}
+	keepTemp = false
+	return nil
+}
+
+func checkExpectedSHA256(path, expected string) error {
+	if expected == "" {
+		return nil
+	}
+	current, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(SHA256(current), expected) {
+		return ErrContentChanged
+	}
+	return nil
+}
+
+func resolveExistingInsideRoot(root, target string) (string, error) {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	rootReal, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		return "", err
+	}
+	targetReal, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return "", err
+	}
+	if targetReal != rootReal && !strings.HasPrefix(targetReal, rootReal+string(os.PathSeparator)) {
+		return "", errors.New("path escapes project root through symlink")
+	}
+	return targetReal, nil
 }

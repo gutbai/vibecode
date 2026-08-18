@@ -14,6 +14,7 @@ The source code and coding CLIs stay on the VPS. The Android app only talks to V
 - Send text input back to a running session.
 - Persistent session/message metadata in `~/.vibecode/state.json`.
 - Session titles are derived automatically from the first meaningful prompt instead of requiring a title when the session is created.
+- Slash suggestions can be discovered from the selected provider/project, including installed skills where supported.
 
 ### Attachments
 - Android system document picker for images and arbitrary files.
@@ -22,12 +23,16 @@ The source code and coding CLIs stay on the VPS. The Android app only talks to V
 - The agent sends the local VPS paths to the selected coding CLI so it can inspect them directly.
 - SHA-256, MIME type, file size and original filename are retained.
 
-### Project files and search
+### Project files, editing and search
 - Project roots are explicitly whitelisted in `config.json`.
 - Browse directories from Android without cloning the project to the phone.
-- Preview UTF-8 files up to 2 MB.
-- Search source with `ripgrep` on the VPS and return file/line/snippet results.
-- Path traversal outside configured project roots is blocked.
+- Preview and edit existing UTF-8 files up to 2 MB directly on the VPS.
+- Open files for editing from either the file browser or search results, then save changes back to the remote project.
+- Each opened file carries a SHA-256 revision; stale saves are rejected if the file changed on the VPS after it was opened.
+- Successful VibeCode saves/restores snapshot the previous contents outside the source tree, allowing per-file history and guarded restore/undo.
+- Remote writes are restricted to existing regular files inside configured project roots; traversal and symlink escapes are rejected.
+- Project search uses literal/fixed-string `ripgrep` matching so punctuation such as the dot in `2.0` is treated literally rather than as regex syntax.
+- Android search highlights matches, supports optional `Aa` case-sensitive filtering, opens the selected occurrence, and provides current/total plus previous/next navigation inside the file.
 
 ### Git
 The Agent exposes read-only Git endpoints for status, diff and recent history. GitHub is not in the Android/VPS runtime path; normal `git pull/push` remains on the VPS.
@@ -36,6 +41,7 @@ The Agent exposes read-only Git endpoints for status, diff and recent history. G
 - Android stores multiple VibeCode Agent endpoints locally.
 - Switch between VPS/PC machines.
 - Basic hostname/OS/CPU/RAM information.
+- Connection failures are surfaced in the UI instead of being silently swallowed; saved machine URL/token values are trimmed before use and machine entries can be edited.
 
 ## Architecture
 
@@ -96,7 +102,7 @@ gradle :app:assembleDebug
 On first launch:
 
 1. Open **Machines**.
-2. Add the HTTPS URL of the Agent and its bearer token.
+2. Add the HTTPS/private-network URL of the Agent and its bearer token.
 3. Select the machine.
 4. Open **Sessions** or **Files**.
 
@@ -159,7 +165,10 @@ A sample systemd unit and installer are in `deploy/`. Review the Linux username 
 - Use a long random bearer token.
 - Keep Agent bound to loopback unless you have an authenticated/private network layer.
 - Uploaded files are session-scoped and written with private directory permissions.
-- Android does not receive shell execution endpoints in this version; it can only invoke the supported session/file/search/git API.
+- Remote file editing only updates existing regular files under configured project roots and rejects traversal/symlink escapes.
+- Stale editor saves/restores are rejected instead of silently overwriting a newer VPS-side version.
+- VibeCode file history is stored outside the source tree under the configured Agent data directory.
+- Android does not receive arbitrary shell execution endpoints; it can only invoke the supported session/file/search/slash/git API.
 
 ## Repository layout
 
