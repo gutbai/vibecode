@@ -57,6 +57,23 @@ func sanitize(s string) string {
 	return b.String()
 }
 
+func autoSessionTitle(text string) string {
+	text = strings.Join(strings.Fields(text), " ")
+	if text == "" {
+		return ""
+	}
+	const maxRunes = 64
+	runes := []rune(text)
+	if len(runes) <= maxRunes {
+		return text
+	}
+	short := string(runes[:maxRunes])
+	if i := strings.LastIndex(short, " "); i >= 28 {
+		short = short[:i]
+	}
+	return strings.TrimSpace(short) + "…"
+}
+
 func (m *Manager) Start(ctx context.Context, provider, projectID, title, initialPrompt string) (*model.Session, error) {
 	p, ok := m.providers[provider]
 	if !ok {
@@ -68,6 +85,9 @@ func (m *Manager) Start(ctx context.Context, provider, projectID, title, initial
 	}
 	if _, err := os.Stat(project.Path); err != nil {
 		return nil, fmt.Errorf("project path: %w", err)
+	}
+	if strings.TrimSpace(title) == "" {
+		title = autoSessionTitle(initialPrompt)
 	}
 	id := randomID("sess_")
 	tmuxName := "vibecode-" + sanitize(provider) + "-" + id[len(id)-8:]
@@ -118,6 +138,9 @@ func (m *Manager) SendMessage(ctx context.Context, sessionID, text string, attac
 	}
 	msg := model.SessionMessage{ID: randomID("msg_"), SessionID: s.ID, Role: model.RoleUser, Text: text, Attachments: attachments, CreatedAt: time.Now().UTC()}
 	_ = m.store.AddMessage(s.ID, msg)
+	if strings.TrimSpace(s.Title) == "" && strings.TrimSpace(text) != "" {
+		s.Title = autoSessionTitle(text)
+	}
 	s.Status = model.StatusRunning
 	s.UpdatedAt = time.Now().UTC()
 	_ = m.store.PutSession(s)
