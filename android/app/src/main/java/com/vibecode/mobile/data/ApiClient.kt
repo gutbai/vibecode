@@ -42,6 +42,7 @@ class ApiClient(private val machine: MachineConfig) {
     suspend fun sessions():List<Session> = get("/api/sessions")
     suspend fun session(id:String):Session = get("/api/sessions/$id")
     suspend fun machine():MachineInfo = get("/api/machine")
+    suspend fun logs(limit:Int=300):List<AgentLogEntry> = get("/api/logs?limit=${limit.coerceIn(1,1000)}")
     suspend fun files(projectId:String,path:String):List<FileNode> = get("/api/projects/$projectId/files?path=${enc(path)}")
     suspend fun readFile(projectId:String,path:String):FileContentResponse = get("/api/projects/$projectId/file?path=${enc(path)}")
     suspend fun writeFile(projectId:String,path:String,content:String,expectedSha256:String):FileWriteResponse =
