@@ -1,4 +1,4 @@
-name: Android
+name: Android CI
 on:
   push:
     paths: ['android/**', '.github/workflows/android.yml']
@@ -23,7 +23,3 @@ jobs:
           gradle-version: '8.9'
       - working-directory: android
         run: gradle :app:assembleDebug
-      - uses: actions/upload-artifact@v4
-        with:
-          name: vibecode-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
