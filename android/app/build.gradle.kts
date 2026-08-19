@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -10,9 +12,9 @@ val releaseKeystorePassword = System.getenv("VIBECODE_KEYSTORE_PASSWORD")
 val releaseKeyAlias = System.getenv("VIBECODE_KEY_ALIAS")
 val releaseKeyPassword = System.getenv("VIBECODE_KEY_PASSWORD")
 
-val versionProperties = java.util.Properties().apply {
+val versionProperties = Properties().apply {
     val versionFile = rootProject.file("version.properties")
-    if (versionFile.exists()) versionFile.inputStream().use { load(it) }
+    if (versionFile.exists()) versionFile.inputStream().use { this.load(it) }
 }
 val defaultVersionCode = versionProperties.getProperty("VERSION_CODE")?.toIntOrNull() ?: 5
 val defaultVersionName = versionProperties.getProperty("VERSION_NAME") ?: "0.3.2"
