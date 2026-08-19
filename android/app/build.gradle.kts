@@ -10,6 +10,13 @@ val releaseKeystorePassword = System.getenv("VIBECODE_KEYSTORE_PASSWORD")
 val releaseKeyAlias = System.getenv("VIBECODE_KEY_ALIAS")
 val releaseKeyPassword = System.getenv("VIBECODE_KEY_PASSWORD")
 
+val versionProperties = java.util.Properties().apply {
+    val versionFile = rootProject.file("version.properties")
+    if (versionFile.exists()) versionFile.inputStream().use { load(it) }
+}
+val defaultVersionCode = versionProperties.getProperty("VERSION_CODE")?.toIntOrNull() ?: 5
+val defaultVersionName = versionProperties.getProperty("VERSION_NAME") ?: "0.3.2"
+
 android {
     namespace = "com.vibecode.mobile"
     compileSdk = 35
@@ -17,8 +24,8 @@ android {
         applicationId = "com.vibecode.mobile"
         minSdk = 26
         targetSdk = 35
-        versionCode = System.getenv("VIBECODE_VERSION_CODE")?.toIntOrNull() ?: 4
-        versionName = System.getenv("VIBECODE_VERSION_NAME") ?: "0.3.1"
+        versionCode = System.getenv("VIBECODE_VERSION_CODE")?.toIntOrNull() ?: defaultVersionCode
+        versionName = System.getenv("VIBECODE_VERSION_NAME") ?: defaultVersionName
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
