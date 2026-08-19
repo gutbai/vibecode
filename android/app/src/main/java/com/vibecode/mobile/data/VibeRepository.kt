@@ -27,6 +27,19 @@ class VibeRepository(private var config:MachineConfig?) {
         _error.value=null
     }
 
+    fun terminalWebSocketUrl(sessionId:String):String? {
+        val c=config ?: return null
+        val base=c.baseUrl.trim().trimEnd('/')
+        if(base.isBlank()) return null
+        val wsBase=when {
+            base.startsWith("https://",ignoreCase=true) -> "wss://"+base.substring(8)
+            base.startsWith("http://",ignoreCase=true) -> "ws://"+base.substring(7)
+            base.startsWith("wss://",ignoreCase=true) || base.startsWith("ws://",ignoreCase=true) -> base
+            else -> "ws://$base"
+        }
+        return "$wsBase/ws/terminal/${Uri.encode(sessionId)}?token=${Uri.encode(c.token)}"
+    }
+
     suspend fun refresh(){
         val a=api ?: run {
             _connected.value=false
