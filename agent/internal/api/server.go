@@ -62,6 +62,7 @@ func New(cfg config.Config, sm *session.Manager, hub *Hub) *Server {
 	mux.HandleFunc("GET /api/projects/{id}/git/diff", s.auth(s.gitDiff))
 	mux.HandleFunc("GET /api/projects/{id}/git/log", s.auth(s.gitLog))
 	mux.HandleFunc("GET /ws", s.ws)
+	mux.HandleFunc("GET /ws/terminal/{id}", s.terminalWS)
 	s.http = &http.Server{Addr: cfg.Listen, Handler: logging(mux), ReadHeaderTimeout: 10 * time.Second}
 	return s
 }
