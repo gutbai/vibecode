@@ -42,6 +42,7 @@ func New(cfg config.Config, sm *session.Manager, hub *Hub) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.health)
 	mux.HandleFunc("GET /api/machine", s.auth(s.machineInfo))
+	mux.HandleFunc("GET /api/logs", s.auth(s.logs))
 	mux.HandleFunc("GET /api/projects", s.auth(s.projects))
 	mux.HandleFunc("GET /api/sessions", s.auth(s.listSessions))
 	mux.HandleFunc("POST /api/sessions", s.auth(s.createSession))
