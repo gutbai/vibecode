@@ -18,6 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -26,6 +27,7 @@ import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -62,6 +64,7 @@ fun SessionsScreen(
 
     var filter by remember { mutableStateOf("ALL") }
     var create by remember { mutableStateOf(false) }
+    var pendingDelete by remember { mutableStateOf<Session?>(null) }
 
     val shown = remember(sessions, filter) {
         if (filter == "ALL") sessions else sessions.filter { it.status == filter }
@@ -121,7 +124,7 @@ fun SessionsScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             items(shown, key = { it.id }) { session ->
-                SessionCard(session) { onOpen(session.id) }
+                SessionCard(session = session, onClick = { onOpen(session.id) }, onDelete = { pendingDelete = session })
             }
         }
     }
@@ -139,6 +142,24 @@ fun SessionsScreen(
             },
         )
     }
+
+    pendingDelete?.let { target ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("Xóa session?") },
+            text = { Text("Session '${target.title.ifBlank { target.id }}' sẽ bị dừng và xóa khỏi VPS, gồm cả attachment của session.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch {
+                        runCatching { repo.delete(target.id) }
+                        pendingDelete = null
+                    }
+                }) { Text("Xóa") }
+            },
+            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Hủy") } },
+        )
+    }
+
 }
 
 @Composable
@@ -218,6 +239,7 @@ private fun StatusFilterChip(
 private fun SessionCard(
     session: Session,
     onClick: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     ElevatedCard(
         modifier = Modifier
@@ -238,6 +260,9 @@ private fun SessionCard(
                 )
                 Spacer(Modifier.width(8.dp))
                 StatusBadge(session.status)
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Default.Delete, contentDescription = "Xóa session")
+                }
             }
             Spacer(Modifier.height(6.dp))
             Row(

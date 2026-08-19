@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Color as AndroidColor
+import android.view.MotionEvent
 import android.view.inputmethod.InputMethodManager
 import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
@@ -21,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChatBubbleOutline
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
@@ -69,6 +71,7 @@ private fun RealTerminalSessionScreen(
     var terminalView by remember(id) { mutableStateOf<WebView?>(null) }
     var actionError by remember(id) { mutableStateOf<String?>(null) }
     var terminalDiagnostic by remember(id) { mutableStateOf<String?>(null) }
+    var confirmDelete by remember(id) { mutableStateOf(false) }
     val terminalUrl = remember(id) { repo.terminalWebSocketUrl(id) }
 
     LaunchedEffect(id) {
@@ -115,7 +118,7 @@ private fun RealTerminalSessionScreen(
             webView.requestFocus()
             runJs("window.vibeFocus();")
             val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-            imm.showSoftInput(webView, InputMethodManager.SHOW_IMPLICIT)
+            webView.postDelayed({ imm.showSoftInput(webView, InputMethodManager.SHOW_IMPLICIT) }, 100)
         }
     }
 
@@ -142,6 +145,9 @@ private fun RealTerminalSessionScreen(
                 actions = {
                     IconButton(onClick = onOpenChat) {
                         Icon(Icons.Default.ChatBubbleOutline, "Chat mode")
+                    }
+                    IconButton(onClick = { confirmDelete = true }) {
+                        Icon(Icons.Default.Delete, "Xóa session")
                     }
                     IconButton(onClick = {
                         scope.launch {
@@ -242,6 +248,13 @@ private fun RealTerminalSessionScreen(
                 )
             }
 
+            Text(
+            text = if (session?.status == "WAITING_INPUT") "Cần nhập: chạm vào terminal để mở bàn phím" else "Chạm vào terminal để nhập",
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = if (session?.status == "WAITING_INPUT") MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
+            fontFamily = FontFamily.Monospace,
+        )
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -250,6 +263,9 @@ private fun RealTerminalSessionScreen(
                 horizontalArrangement = Arrangement.spacedBy(5.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                FilledTonalIconButton(onClick = { showKeyboard() }) {
+                    Icon(Icons.Default.Keyboard, "Mở bàn phím")
+                }
                 TerminalKey("Esc") { sendSpecialKey("ESC") }
                 TerminalKey("Tab") { sendSpecialKey("TAB") }
                 TerminalKey("←") { sendSpecialKey("LEFT") }
@@ -259,12 +275,29 @@ private fun RealTerminalSessionScreen(
                 TerminalKey("Enter") { sendSpecialKey("ENTER") }
                 TerminalKey("^C") { sendSpecialKey("CTRL_C") }
                 TerminalKey("Paste") { pasteClipboard() }
-                FilledTonalIconButton(onClick = { showKeyboard() }) {
-                    Icon(Icons.Default.Keyboard, "Show keyboard")
-                }
             }
         }
     }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Xóa session?") },
+            text = { Text("Session này sẽ bị dừng và xóa khỏi VPS.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = false
+                    scope.launch {
+                        runCatching { repo.delete(id) }
+                            .onSuccess { onBack() }
+                            .onFailure { actionError = it.message }
+                    }
+                }) { Text("Xóa") }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Hủy") } },
+        )
+    }
+
 }
 
 @Composable
@@ -303,6 +336,15 @@ private fun RemoteTerminalWebView(
                 setBackgroundColor(AndroidColor.rgb(3, 6, 9))
                 isFocusable = true
                 isFocusableInTouchMode = true
+                setOnTouchListener { _, event ->
+                    if (event.action == MotionEvent.ACTION_DOWN) {
+                        requestFocus()
+                        evaluateJavascript("window.vibeFocus && window.vibeFocus();", null)
+                        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                        postDelayed({ imm.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT) }, 100)
+                    }
+                    false
+                }
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 settings.allowFileAccess = false
@@ -314,6 +356,7 @@ private fun RemoteTerminalWebView(
                 webViewClient = object : WebViewClient() {
                     override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
                         super.onReceivedError(view, request, error)
+                        if (request?.url?.path == "/favicon.ico") return
                         val target = request?.url?.let { "${it.scheme}://${it.host}${it.path}" }.orEmpty()
                         onDiagnostic("ERROR", "webview", "resource error code=${error?.errorCode} target=$target ${error?.description}")
                     }
@@ -349,6 +392,7 @@ private fun terminalHtml(websocketUrl: String): String {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <link rel="icon" href="data:," />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/css/xterm.css" />
   <style>
     html, body, #terminal { width:100%; height:100%; margin:0; padding:0; background:#030609; overflow:hidden; }
@@ -467,6 +511,7 @@ private fun terminalHtml(websocketUrl: String): String {
     }
 
     term.onData(sendInput);
+    document.getElementById('terminal').addEventListener('pointerdown', () => term.focus());
     term.onResize(({cols, rows}) => sendObject({type:'resize', cols, rows}));
     new ResizeObserver(() => setTimeout(fitAndNotify, 40)).observe(document.getElementById('terminal'));
 

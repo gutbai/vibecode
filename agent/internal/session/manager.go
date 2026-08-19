@@ -100,6 +100,9 @@ func (m *Manager) Start(ctx context.Context, provider, projectID, title, initial
 	_ = m.store.PutSession(s)
 	m.publish("session.created", s.ID, s)
 	if strings.TrimSpace(initialPrompt) != "" {
+		if err := m.waitForProviderReady(ctx, p, s.TMuxName); err != nil {
+			return s, err
+		}
 		_, err := m.SendMessage(ctx, s.ID, initialPrompt, nil)
 		if err != nil {
 			return s, err
@@ -110,6 +113,42 @@ func (m *Manager) Start(ctx context.Context, provider, projectID, title, initial
 
 func (m *Manager) Get(id string) (*model.Session, bool) { return m.store.GetSession(id) }
 func (m *Manager) List() []*model.Session               { return m.store.ListSessions() }
+
+func (m *Manager) waitForProviderReady(ctx context.Context, p Provider, tmuxName string) error {
+	deadline := time.Now().Add(10 * time.Second)
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	lastOutput := ""
+	stableSamples := 0
+	for {
+		if !p.Exists(ctx, tmuxName) {
+			return errors.New("session exited during startup")
+		}
+		out, _ := p.Capture(ctx, tmuxName, 120)
+		if strings.TrimSpace(out) != "" {
+			if inferStatus(out, true) == model.StatusWaitingInput {
+				return nil
+			}
+			if out == lastOutput {
+				stableSamples++
+			} else {
+				lastOutput = out
+				stableSamples = 0
+			}
+			if stableSamples >= 2 {
+				return nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
 
 func (m *Manager) SendMessage(ctx context.Context, sessionID, text string, attachments []model.Attachment) (*model.SessionMessage, error) {
 	s, ok := m.store.GetSession(sessionID)
@@ -206,6 +245,26 @@ func (m *Manager) Stop(ctx context.Context, id string) error {
 	return nil
 }
 
+func (m *Manager) Delete(ctx context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.store.GetSession(id)
+	if !ok {
+		return os.ErrNotExist
+	}
+	if p := m.providers[s.Provider]; p != nil && p.Exists(ctx, s.TMuxName) {
+		if err := p.Stop(ctx, s.TMuxName); err != nil {
+			return err
+		}
+	}
+	if err := m.store.DeleteSession(id); err != nil {
+		return err
+	}
+	_ = os.RemoveAll(filepath.Join(m.cfg.DataDir, "sessions", id))
+	m.publish("session.deleted", id, map[string]bool{"deleted": true})
+	return nil
+}
+
 func (m *Manager) SaveAttachment(sessionID, originalName, mime string, size int64, sha string, srcTemp string) (model.Attachment, error) {
 	if _, ok := m.store.GetSession(sessionID); !ok {
 		return model.Attachment{}, os.ErrNotExist
@@ -258,6 +317,8 @@ func (m *Manager) Close() {
 }
 
 func (m *Manager) poll(ctx context.Context) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for _, s := range m.store.ListSessions() {
 		if s.Status == model.StatusStopped || s.Status == model.StatusDone {
 			continue

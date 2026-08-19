@@ -80,6 +80,21 @@ func (s *Store) ListSessions() []*model.Session {
 	return out
 }
 
+func (s *Store) DeleteSession(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.Sessions[id]; !ok {
+		return os.ErrNotExist
+	}
+	delete(s.Sessions, id)
+	for attachmentID, attachment := range s.Attachments {
+		if attachment.SessionID == id {
+			delete(s.Attachments, attachmentID)
+		}
+	}
+	return s.persistLocked()
+}
+
 func (s *Store) AddMessage(sessionID string, m model.SessionMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
