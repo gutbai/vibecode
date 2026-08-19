@@ -48,13 +48,15 @@ class AppUpdater(private val context: Context) {
             .url("https://api.github.com/repos/gutbai/vibecode/releases?per_page=30")
             .header("Accept", "application/vnd.github+json")
             .header("User-Agent", "VibeCode-Android/${BuildConfig.VERSION_NAME}")
+            .header("Cache-Control", "no-cache")
+            .header("Pragma", "no-cache")
             .build()
 
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) error("GitHub trả về HTTP ${response.code}")
             val body = response.body?.string() ?: error("GitHub không trả dữ liệu")
             val releases = json.decodeFromString<List<GitHubRelease>>(body)
-            releases.asSequence()
+            val compatible = releases.asSequence()
                 .filter { !it.draft && !it.prerelease }
                 .mapNotNull { release ->
                     val versionCode = tagRegex.matchEntire(release.tagName)
@@ -73,8 +75,15 @@ class AppUpdater(private val context: Context) {
                         downloadUrl = apk.browserDownloadUrl,
                     )
                 }
-                .filter { it.versionCode > BuildConfig.VERSION_CODE }
-                .maxByOrNull { it.versionCode }
+                .toList()
+
+            if (compatible.isEmpty()) {
+                error("Chưa có GitHub Release Android hợp lệ (android-vN + APK). Không thể kết luận đây là bản mới nhất.")
+            }
+
+            val latest = compatible.maxByOrNull { it.versionCode }
+                ?: error("Không đọc được phiên bản Android mới nhất")
+            if (latest.versionCode > BuildConfig.VERSION_CODE) latest else null
         }
     }
 
