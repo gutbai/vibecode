@@ -103,6 +103,7 @@ class VibeRepository(private var config:MachineConfig?) {
 
     suspend fun session(id:String)=call{it.session(id)}
     suspend fun logs(limit:Int=300)=call{it.logs(limit)}
+    suspend fun terminalProbe(id:String)=call{it.terminalProbe(id)}
     suspend fun send(id:String,text:String,attachments:List<Attachment>)=call{it.sendMessage(id,text,attachments)}
     suspend fun sendControl(id:String,vararg keys:String)=call{it.sendControl(id,keys.toList())}
     suspend fun upload(id:String,resolver:ContentResolver,uri:Uri)=call{it.upload(id,resolver,uri)}
