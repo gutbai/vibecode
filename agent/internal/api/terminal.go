@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
@@ -53,6 +54,19 @@ func (s *Server) terminalWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Android uses a lightweight HTTP probe before opening the real websocket.
+	// Treat a normal GET as a readiness check instead of feeding it to the
+	// websocket upgrader, which would otherwise return a misleading HTTP 400.
+	if !websocket.IsWebSocketUpgrade(r) {
+		logbuf.Add("INFO", "terminal", fmt.Sprintf("probe OK session=%s tmux=%s", sessionID, sess.TMuxName))
+		jsonOut(w, http.StatusOK, map[string]interface{}{
+			"ok":      true,
+			"session": sessionID,
+			"tmux":    sess.TMuxName,
+		})
+		return
+	}
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		logbuf.Add("ERROR", "terminal", fmt.Sprintf("websocket upgrade failed session=%s: %v", sessionID, err))
@@ -78,6 +92,31 @@ func (s *Server) terminalWS(w http.ResponseWriter, r *http.Request) {
 	defer ptmx.Close()
 	logbuf.Add("INFO", "terminal", fmt.Sprintf("PTY attached session=%s size=%dx%d", sessionID, cols, rows))
 
+	var writeMu sync.Mutex
+
+	// tmux attach does not always repaint an already-running TUI immediately.
+	// Send the currently visible pane first so xterm never opens as a blank
+	// screen while waiting for the next Claude/Codex/Grok redraw.
+	snapshotCmd := exec.CommandContext(ctx, "tmux", "capture-pane", "-p", "-e", "-t", sess.TMuxName)
+	snapshotCmd.Env = os.Environ()
+	if snapshot, snapErr := snapshotCmd.Output(); snapErr != nil {
+		logbuf.Add("WARN", "terminal", fmt.Sprintf("initial pane capture failed session=%s: %v", sessionID, snapErr))
+	} else if len(snapshot) > 0 {
+		frame := make([]byte, 0, len(snapshot)+16)
+		frame = append(frame, []byte("\x1b[2J\x1b[H")...)
+		frame = append(frame, snapshot...)
+		writeMu.Lock()
+		writeErr := conn.WriteMessage(websocket.BinaryMessage, frame)
+		writeMu.Unlock()
+		if writeErr != nil {
+			logbuf.Add("WARN", "terminal", fmt.Sprintf("initial snapshot write failed session=%s: %v", sessionID, writeErr))
+			return
+		}
+		logbuf.Add("INFO", "terminal", fmt.Sprintf("initial pane snapshot sent session=%s bytes=%d", sessionID, len(snapshot)))
+	} else {
+		logbuf.Add("INFO", "terminal", fmt.Sprintf("initial pane snapshot empty session=%s", sessionID))
+	}
+
 	processDone := make(chan struct{})
 	go func() {
 		err := cmd.Wait()
@@ -87,14 +126,41 @@ func (s *Server) terminalWS(w http.ResponseWriter, r *http.Request) {
 		close(processDone)
 	}()
 
-	var writeMu sync.Mutex
+	keepaliveDone := make(chan struct{})
+	defer close(keepaliveDone)
+	go func() {
+		ticker := time.NewTicker(20 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-keepaliveDone:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				writeMu.Lock()
+				err := conn.WriteControl(websocket.PingMessage, []byte("vibecode"), time.Now().Add(5*time.Second))
+				writeMu.Unlock()
+				if err != nil {
+					logbuf.Add("WARN", "terminal", fmt.Sprintf("websocket ping failed session=%s: %v", sessionID, err))
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+
 	outputDone := make(chan struct{})
+	var firstOutput sync.Once
 	go func() {
 		defer close(outputDone)
 		buf := make([]byte, 32*1024)
 		for {
 			n, readErr := ptmx.Read(buf)
 			if n > 0 {
+				firstOutput.Do(func() {
+					logbuf.Add("INFO", "terminal", fmt.Sprintf("PTY output started session=%s firstChunkBytes=%d", sessionID, n))
+				})
 				frame := append([]byte(nil), buf[:n]...)
 				writeMu.Lock()
 				writeErr := conn.WriteMessage(websocket.BinaryMessage, frame)
@@ -117,6 +183,8 @@ func (s *Server) terminalWS(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-processDone:
+			return
+		case <-outputDone:
 			return
 		default:
 		}
