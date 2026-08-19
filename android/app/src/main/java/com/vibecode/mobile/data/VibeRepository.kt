@@ -25,6 +25,7 @@ class VibeRepository(private var config:MachineConfig?) {
         _machine.value=null
         _connected.value=false
         _error.value=null
+        AppLog.add("INFO","repo","machine=${c?.name ?: "none"} base=${c?.baseUrl.orEmpty()}")
     }
 
     fun terminalWebSocketUrl(sessionId:String):String? {
@@ -37,6 +38,7 @@ class VibeRepository(private var config:MachineConfig?) {
             base.startsWith("wss://",ignoreCase=true) || base.startsWith("ws://",ignoreCase=true) -> base
             else -> "ws://$base"
         }
+        AppLog.add("INFO","terminal","websocket target=$wsBase/ws/terminal/${Uri.encode(sessionId)}")
         return "$wsBase/ws/terminal/${Uri.encode(sessionId)}?token=${Uri.encode(c.token)}"
     }
 
@@ -61,15 +63,22 @@ class VibeRepository(private var config:MachineConfig?) {
         } catch(t:Throwable) {
             _connected.value=false
             _error.value=describe(t)
+            AppLog.add("ERROR","repo","refresh failed: ${describe(t)}")
         }
     }
 
     fun connect(scope:CoroutineScope){
         val a=api?:return
         socket?.cancel()
+        AppLog.add("INFO","events","connecting event websocket")
         socket=a.socket(
             onEvent={e-> if(e.type.startsWith("session.")) scope.launch{refresh()}},
-            onClosed={t-> if(t!=null){ _error.value=describe(t) }}
+            onClosed={t->
+                if(t!=null){
+                    _error.value=describe(t)
+                    AppLog.add("ERROR","events","websocket failed: ${describe(t)}")
+                } else AppLog.add("WARN","events","websocket closed")
+            }
         )
     }
 
@@ -82,6 +91,7 @@ class VibeRepository(private var config:MachineConfig?) {
             }
         } catch(t:Throwable) {
             _error.value=describe(t)
+            AppLog.add("ERROR","api",describe(t))
             throw t
         }
     }
@@ -92,6 +102,7 @@ class VibeRepository(private var config:MachineConfig?) {
     }
 
     suspend fun session(id:String)=call{it.session(id)}
+    suspend fun logs(limit:Int=300)=call{it.logs(limit)}
     suspend fun send(id:String,text:String,attachments:List<Attachment>)=call{it.sendMessage(id,text,attachments)}
     suspend fun sendControl(id:String,vararg keys:String)=call{it.sendControl(id,keys.toList())}
     suspend fun upload(id:String,resolver:ContentResolver,uri:Uri)=call{it.upload(id,resolver,uri)}
