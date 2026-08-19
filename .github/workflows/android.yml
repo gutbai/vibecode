@@ -21,5 +21,41 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - working-directory: android
-        run: gradle :app:assembleDebug
+
+      - name: Prepare release signing
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE_B64"
+          test -n "$KEYSTORE_PASSWORD"
+          test -n "$KEY_ALIAS"
+          test -n "$KEY_PASSWORD"
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/vibecode-release.jks"
+          chmod 600 "$RUNNER_TEMP/vibecode-release.jks"
+
+      - name: Build signed release APK
+        working-directory: android
+        env:
+          VIBECODE_VERSION_CODE: 2
+          VIBECODE_VERSION_NAME: 0.2.0
+          VIBECODE_KEYSTORE_PATH: ${{ runner.temp }}/vibecode-release.jks
+          VIBECODE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          VIBECODE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          VIBECODE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: gradle :app:assembleRelease
+
+      - name: Verify APK signature
+        run: |
+          APK="android/app/build/outputs/apk/release/app-release.apk"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          "$APKSIGNER" verify --verbose "$APK"
+          cp "$APK" "$RUNNER_TEMP/VibeCode.apk"
+          sha256sum "$RUNNER_TEMP/VibeCode.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vibecode-signed-apk
+          path: ${{ runner.temp }}/VibeCode.apk
