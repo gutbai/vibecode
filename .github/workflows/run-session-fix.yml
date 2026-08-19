@@ -1,0 +1,39 @@
+name: Run session fix
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.head_ref == 'fix/session-delete-mobile-terminal-input'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/session-delete-mobile-terminal-input
+      - name: Extract and run patch script
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          text = Path('.github/workflows/apply-session-mobile-fix.yml').read_text().splitlines()
+          start = next(i for i,l in enumerate(text) if "python3 <<'PY'" in l) + 1
+          end = next(i for i in range(start, len(text)) if text[i].strip() == 'PY')
+          lines = text[start:end]
+          normalized = []
+          for line in lines:
+              normalized.append(line[10:] if line.startswith('          ') else line)
+          Path('/tmp/apply_session_fix.py').write_text('\n'.join(normalized) + '\n')
+          PY
+          python3 /tmp/apply_session_fix.py
+          rm -f .github/workflows/apply-session-mobile-fix.yml .github/workflows/run-session-fix.yml
+          git config user.name "VibeCode CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Fix mobile terminal input and session lifecycle"
+          git push origin HEAD:fix/session-delete-mobile-terminal-input
