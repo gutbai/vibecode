@@ -10,8 +10,12 @@ WorkingDirectory=/opt/vibecode
 ExecStart=/opt/vibecode/vibecode-agent -config /etc/vibecode/config.json
 Restart=always
 RestartSec=3
+# Keep tmux-hosted coding sessions alive when the agent itself restarts.
+# Do not use PrivateTmp: it hides /tmp from later Agent processes, so PTY
+# attach cannot find the existing tmux socket after a restart.
+KillMode=process
+Environment=TMUX_TMPDIR=%h/.vibecode/tmux
 NoNewPrivileges=true
-PrivateTmp=true
 ProtectSystem=strict
 ReadWritePaths=/home/ubuntu/.vibecode /home/ubuntu/projects
 

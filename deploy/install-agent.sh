@@ -153,9 +153,9 @@ install_binary() {
 }
 
 ensure_directories() {
-  ${SUDO} mkdir -p "${CONFIG_DIR}" "${DATA_DIR}" "${PROJECTS_ROOT}"
+  ${SUDO} mkdir -p "${CONFIG_DIR}" "${DATA_DIR}" "${DATA_DIR}/tmux" "${PROJECTS_ROOT}"
   ${SUDO} chown -R "${TARGET_USER}:${TARGET_GROUP}" "${DATA_DIR}" "${PROJECTS_ROOT}"
-  ${SUDO} chmod 700 "${DATA_DIR}"
+  ${SUDO} chmod 700 "${DATA_DIR}" "${DATA_DIR}/tmux"
 }
 
 create_config() {
@@ -233,15 +233,16 @@ User=${TARGET_USER}
 Group=${TARGET_GROUP}
 WorkingDirectory=${INSTALL_DIR}
 Environment=HOME=${TARGET_HOME}
+Environment=TMUX_TMPDIR=${DATA_DIR}/tmux
 Environment=PATH=${service_path}
 ExecStart=${INSTALL_DIR}/${APP_NAME} -config ${CONFIG_FILE}
 Restart=always
 RestartSec=3
 TimeoutStopSec=10
 # Keep tmux-hosted coding sessions alive when the agent itself restarts.
+# Do not use PrivateTmp: later Agent processes cannot see the tmux socket.
 KillMode=process
 NoNewPrivileges=true
-PrivateTmp=true
 ProtectSystem=full
 
 [Install]
