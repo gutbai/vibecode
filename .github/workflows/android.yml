@@ -21,5 +21,20 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - working-directory: android
-        run: gradle :app:assembleDebug
+      - name: Build unsigned release APK
+        working-directory: android
+        run: gradle :app:assembleRelease
+      - name: Collect APK and apksigner
+        run: |
+          mkdir -p "$RUNNER_TEMP/vibecode-sign-input/lib"
+          cp android/app/build/outputs/apk/release/app-release-unsigned.apk "$RUNNER_TEMP/vibecode-sign-input/VibeCode-latest-unsigned.apk"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -n "$APKSIGNER"
+          cp "$APKSIGNER" "$RUNNER_TEMP/vibecode-sign-input/apksigner"
+          chmod +x "$RUNNER_TEMP/vibecode-sign-input/apksigner"
+          BUILD_TOOLS_DIR="$(dirname "$APKSIGNER")"
+          if [ -d "$BUILD_TOOLS_DIR/lib" ]; then cp -a "$BUILD_TOOLS_DIR/lib/." "$RUNNER_TEMP/vibecode-sign-input/lib/"; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vibecode-latest-sign-input
+          path: ${{ runner.temp }}/vibecode-sign-input/
