@@ -6,7 +6,10 @@ import android.content.Context
 import android.graphics.Color as AndroidColor
 import android.view.inputmethod.InputMethodManager
 import android.webkit.ConsoleMessage
+import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -30,6 +33,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.vibecode.mobile.data.AppLog
 import com.vibecode.mobile.data.Session
 import com.vibecode.mobile.data.VibeRepository
 import kotlinx.coroutines.delay
@@ -64,13 +68,27 @@ private fun RealTerminalSessionScreen(
     var session by remember(id) { mutableStateOf<Session?>(null) }
     var terminalView by remember(id) { mutableStateOf<WebView?>(null) }
     var actionError by remember(id) { mutableStateOf<String?>(null) }
+    var terminalDiagnostic by remember(id) { mutableStateOf<String?>(null) }
     val terminalUrl = remember(id) { repo.terminalWebSocketUrl(id) }
 
     LaunchedEffect(id) {
+        AppLog.add("INFO", "terminal", "open session=$id")
+        runCatching { repo.terminalProbe(id) }
+            .onSuccess { probe ->
+                terminalDiagnostic = "Endpoint: $probe"
+                AppLog.add("INFO", "terminal-probe", probe)
+            }
+            .onFailure { error ->
+                terminalDiagnostic = "Probe lỗi: ${error.message}"
+                AppLog.add("ERROR", "terminal-probe", error.message ?: error.toString())
+            }
         while (true) {
             runCatching { repo.session(id) }
                 .onSuccess { session = it }
-                .onFailure { actionError = it.message }
+                .onFailure {
+                    actionError = it.message
+                    AppLog.add("ERROR", "terminal-session", it.message ?: it.toString())
+                }
             delay(2000)
         }
     }
@@ -128,7 +146,10 @@ private fun RealTerminalSessionScreen(
                     IconButton(onClick = {
                         scope.launch {
                             runCatching { repo.stop(id) }
-                                .onFailure { actionError = it.message }
+                                .onFailure {
+                                    actionError = it.message
+                                    AppLog.add("ERROR", "terminal-stop", it.message ?: it.toString())
+                                }
                         }
                     }) {
                         Icon(Icons.Default.Stop, "Stop session")
@@ -173,6 +194,17 @@ private fun RealTerminalSessionScreen(
                 )
             }
 
+            terminalDiagnostic?.let { diagnostic ->
+                Text(
+                    diagnostic,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                )
+            }
+
             if (terminalUrl == null) {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Text("Chưa có kết nối VPS cho terminal.")
@@ -191,6 +223,12 @@ private fun RealTerminalSessionScreen(
                         websocketUrl = terminalUrl,
                         modifier = Modifier.fillMaxSize(),
                         onViewReady = { terminalView = it },
+                        onDiagnostic = { level, source, message ->
+                            AppLog.add(level, source, message)
+                            if (level.equals("ERROR", true) || level.equals("WARN", true)) {
+                                terminalDiagnostic = message
+                            }
+                        },
                     )
                 }
             }
@@ -239,12 +277,22 @@ private fun TerminalKey(label: String, onClick: () -> Unit) {
     }
 }
 
-@SuppressLint("SetJavaScriptEnabled")
+private class TerminalLogBridge(
+    private val callback: (String, String, String) -> Unit,
+) {
+    @JavascriptInterface
+    fun log(level: String, message: String) {
+        callback(level, "terminal-js", message)
+    }
+}
+
+@SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
 @Composable
 private fun RemoteTerminalWebView(
     websocketUrl: String,
     modifier: Modifier = Modifier,
     onViewReady: (WebView) -> Unit,
+    onDiagnostic: (String, String, String) -> Unit,
 ) {
     val html = remember(websocketUrl) { terminalHtml(websocketUrl) }
 
@@ -262,9 +310,21 @@ private fun RemoteTerminalWebView(
                 settings.javaScriptCanOpenWindowsAutomatically = false
                 settings.setSupportMultipleWindows(false)
                 settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                webViewClient = WebViewClient()
+                addJavascriptInterface(TerminalLogBridge(onDiagnostic), "VibeLog")
+                webViewClient = object : WebViewClient() {
+                    override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
+                        super.onReceivedError(view, request, error)
+                        val target = request?.url?.let { "${it.scheme}://${it.host}${it.path}" }.orEmpty()
+                        onDiagnostic("ERROR", "webview", "resource error code=${error?.errorCode} target=$target ${error?.description}")
+                    }
+                }
                 webChromeClient = object : WebChromeClient() {
-                    override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean = true
+                    override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
+                        consoleMessage?.let {
+                            onDiagnostic("DEBUG", "webview-console", "${it.message()} (${it.sourceId()}:${it.lineNumber()})")
+                        }
+                        return true
+                    }
                 }
                 loadDataWithBaseURL(
                     "http://vibecode.local/",
@@ -273,6 +333,7 @@ private fun RemoteTerminalWebView(
                     "UTF-8",
                     null,
                 )
+                onDiagnostic("INFO", "webview", "terminal HTML loaded")
                 onViewReady(this)
             }
         },
@@ -305,6 +366,12 @@ private fun terminalHtml(websocketUrl: String): String {
     import { Terminal } from 'https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/+esm';
     import { FitAddon } from 'https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.11.0/+esm';
 
+    const log = (level, message) => {
+      try { VibeLog.log(level, String(message)); } catch (_) {}
+    };
+    window.addEventListener('error', event => log('ERROR', 'window error: ' + event.message));
+    window.addEventListener('unhandledrejection', event => log('ERROR', 'promise rejection: ' + event.reason));
+
     const status = document.getElementById('status');
     const term = new Terminal({
       cursorBlink: true,
@@ -326,24 +393,43 @@ private fun terminalHtml(websocketUrl: String): String {
     let socket = null;
     let reconnectTimer = null;
     let disposed = false;
+    let attempts = 0;
     const wsUrl = $quotedUrl;
     const decoder = new TextDecoder('utf-8');
+    log('INFO', 'xterm ready; websocket host=' + (() => { try { const u=new URL(wsUrl); return u.protocol+'//'+u.host+u.pathname; } catch (_) { return 'invalid-url'; } })());
 
     function sendObject(value) {
       if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(value));
     }
     function sendInput(data) { sendObject({type:'input', data}); }
     function fitAndNotify() {
-      try { fit.fit(); } catch (_) {}
+      try { fit.fit(); } catch (e) { log('WARN', 'fit failed: ' + e); }
       sendObject({type:'resize', cols:term.cols, rows:term.rows});
+    }
+    function scheduleReconnect() {
+      if (disposed) return;
+      const delay = Math.min(10000, 1500 * Math.max(1, attempts));
+      status.textContent = 'reconnecting ' + Math.round(delay/1000) + 's…';
+      status.style.color = '#f59e0b';
+      reconnectTimer = setTimeout(connect, delay);
     }
     function connect() {
       if (disposed) return;
-      status.textContent = 'connecting…';
+      attempts += 1;
+      status.textContent = 'connecting #' + attempts + '…';
       status.style.color = '#94a3b8';
-      socket = new WebSocket(wsUrl);
+      log('INFO', 'websocket connect attempt #' + attempts);
+      try {
+        socket = new WebSocket(wsUrl);
+      } catch (e) {
+        log('ERROR', 'WebSocket constructor failed: ' + e);
+        scheduleReconnect();
+        return;
+      }
       socket.binaryType = 'arraybuffer';
       socket.onopen = () => {
+        log('INFO', 'websocket OPEN');
+        attempts = 0;
         status.textContent = 'live';
         status.style.color = '#34d399';
         fitAndNotify();
@@ -353,7 +439,10 @@ private fun terminalHtml(websocketUrl: String): String {
         if (typeof event.data === 'string') {
           try {
             const message = JSON.parse(event.data);
-            if (message.type === 'error') term.writeln('\r\n\x1b[31m[VibeCode] ' + message.message + '\x1b[0m');
+            if (message.type === 'error') {
+              log('ERROR', 'server terminal error: ' + message.message);
+              term.writeln('\r\n\x1b[31m[VibeCode] ' + message.message + '\x1b[0m');
+            }
           } catch (_) {
             term.write(event.data);
           }
@@ -366,14 +455,14 @@ private fun terminalHtml(websocketUrl: String): String {
           term.write(decoder.decode(data, {stream:true}));
         }
       };
-      socket.onclose = () => {
-        status.textContent = 'reconnecting…';
-        status.style.color = '#f59e0b';
-        if (!disposed) reconnectTimer = setTimeout(connect, 1500);
+      socket.onclose = (event) => {
+        log('WARN', 'websocket CLOSE code=' + event.code + ' clean=' + event.wasClean + ' reason=' + (event.reason || '<empty>'));
+        scheduleReconnect();
       };
       socket.onerror = () => {
         status.textContent = 'connection error';
         status.style.color = '#f87171';
+        log('ERROR', 'websocket ERROR (browser does not expose HTTP handshake status; see Endpoint probe and Agent log)');
       };
     }
 
@@ -396,6 +485,7 @@ private fun terminalHtml(websocketUrl: String): String {
       disposed = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
       if (socket) socket.close();
+      log('INFO', 'terminal disposed');
     });
 
     connect();
