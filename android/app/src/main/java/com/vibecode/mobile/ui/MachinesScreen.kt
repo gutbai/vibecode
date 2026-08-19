@@ -34,7 +34,7 @@ fun MachinesScreen(
         Spacer(Modifier.height(12.dp))
         AppUpdateCard()
         Spacer(Modifier.height(12.dp))
-        LazyColumn(verticalArrangement=Arrangement.spacedBy(8.dp)){
+        LazyColumn(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(8.dp)){
             items(items,key={it.id}){m->
                 ElevatedCard(Modifier.fillMaxWidth().clickable{onSelect(m)}){
                     Row(
