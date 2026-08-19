@@ -108,6 +108,7 @@ class VibeRepository(private var config:MachineConfig?) {
     suspend fun sendControl(id:String,vararg keys:String)=call{it.sendControl(id,keys.toList())}
     suspend fun upload(id:String,resolver:ContentResolver,uri:Uri)=call{it.upload(id,resolver,uri)}
     suspend fun stop(id:String)=call{it.stopSession(id)}
+    suspend fun delete(id:String){ call{it.deleteSession(id)}; refresh() }
     suspend fun create(provider:String,projectId:String,title:String,prompt:String)=call{it.createSession(provider,projectId,title,prompt)}
     suspend fun files(projectId:String,path:String)=call{it.files(projectId,path)}
     suspend fun readFile(projectId:String,path:String)=call{it.readFile(projectId,path)}

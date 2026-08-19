@@ -47,6 +47,7 @@ func New(cfg config.Config, sm *session.Manager, hub *Hub) *Server {
 	mux.HandleFunc("GET /api/sessions", s.auth(s.listSessions))
 	mux.HandleFunc("POST /api/sessions", s.auth(s.createSession))
 	mux.HandleFunc("GET /api/sessions/{id}", s.auth(s.getSession))
+	mux.HandleFunc("DELETE /api/sessions/{id}", s.auth(s.deleteSession))
 	mux.HandleFunc("POST /api/sessions/{id}/messages", s.auth(s.sendMessage))
 	mux.HandleFunc("POST /api/sessions/{id}/keys", s.auth(s.sendKeys))
 	mux.HandleFunc("POST /api/sessions/{id}/attachments", s.auth(s.uploadAttachment))
@@ -162,6 +163,18 @@ func (s *Server) sendKeys(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) stopSession(w http.ResponseWriter, r *http.Request) {
 	if err := s.sessions.Stop(r.Context(), r.PathValue("id")); err != nil {
+		errOut(w, 400, err)
+		return
+	}
+	jsonOut(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
+	if err := s.sessions.Delete(r.Context(), r.PathValue("id")); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			errOut(w, http.StatusNotFound, err)
+			return
+		}
 		errOut(w, 400, err)
 		return
 	}

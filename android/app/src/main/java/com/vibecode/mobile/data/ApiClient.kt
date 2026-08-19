@@ -36,6 +36,11 @@ class ApiClient(private val machine: MachineConfig) {
         val body=json.encodeToString(input).toRequestBody("application/json".toMediaTypeOrNull())
         http.newCall(req(path).put(body).build()).execute().use { r -> val text=r.body?.string().orEmpty(); if(!r.isSuccessful) throw ApiException(r.code, parseError(text)); json.decodeFromString<T>(text) }
     }
+    private suspend inline fun <reified T> delete(path:String):T = withContext(Dispatchers.IO) {
+        http.newCall(req(path).delete().build()).execute().use { r ->
+            val text=r.body?.string().orEmpty(); if(!r.isSuccessful) throw ApiException(r.code, parseError(text)); json.decodeFromString<T>(text)
+        }
+    }
     private fun parseError(raw:String)=runCatching{json.decodeFromString<ServerError>(raw).error}.getOrDefault(raw.ifBlank{"Request failed"})
 
     suspend fun projects():List<Project> = get("/api/projects")
@@ -70,6 +75,7 @@ class ApiClient(private val machine: MachineConfig) {
     suspend fun createSession(provider:String,projectId:String,title:String,prompt:String):Session =
         post("/api/sessions", CreateSessionRequest(provider, projectId, title, prompt))
     suspend fun stopSession(id:String) { post<OkResponse,Map<String,String>>("/api/sessions/$id/stop", emptyMap()) }
+    suspend fun deleteSession(id:String) { delete<OkResponse>("/api/sessions/$id") }
     suspend fun upload(sessionId:String,resolver:ContentResolver,uri:Uri):Attachment = withContext(Dispatchers.IO) {
         val name = resolver.query(uri,arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),null,null,null)?.use { c -> if(c.moveToFirst()) c.getString(0) else null } ?: "attachment"
         val mime=resolver.getType(uri) ?: "application/octet-stream"
