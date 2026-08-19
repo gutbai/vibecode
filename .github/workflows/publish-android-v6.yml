@@ -1,0 +1,67 @@
+name: Publish Android v6
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    if: github.head_ref == 'release/android-v6-manual'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Check signing configuration
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE_B64"
+          test -n "$KEYSTORE_PASSWORD"
+          test -n "$KEY_ALIAS"
+          test -n "$KEY_PASSWORD"
+      - name: Build signed 0.3.3
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          VIBECODE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          VIBECODE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          VIBECODE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          VIBECODE_VERSION_CODE: '6'
+          VIBECODE_VERSION_NAME: '0.3.3'
+        run: |
+          KEYSTORE_PATH="$RUNNER_TEMP/vibecode-release.jks"
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE_PATH"
+          chmod 600 "$KEYSTORE_PATH"
+          export VIBECODE_KEYSTORE_PATH="$KEYSTORE_PATH"
+          cd android
+          gradle :app:assembleRelease
+      - name: Verify and publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK="android/app/build/outputs/apk/release/app-release.apk"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          "$APKSIGNER" verify --verbose "$APK"
+          cp "$APK" "$RUNNER_TEMP/VibeCode.apk"
+          if gh release view android-v6 >/dev/null 2>&1; then
+            gh release upload android-v6 "$RUNNER_TEMP/VibeCode.apk#VibeCode.apk" --clobber
+          else
+            gh release create android-v6 "$RUNNER_TEMP/VibeCode.apk#VibeCode.apk" --target a22b2522922fe07afe90586e1aac425813e2afe3 --title "VibeCode Android 0.3.3" --notes "Signed Android build 0.3.3 (versionCode 6). Includes session deletion, reliable mobile PTY input, and delayed initial prompt delivery for CLI startup readiness."
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vibecode-release-0.3.3
+          path: ${{ runner.temp }}/VibeCode.apk
