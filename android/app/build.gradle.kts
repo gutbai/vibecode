@@ -17,8 +17,8 @@ android {
         applicationId = "com.vibecode.mobile"
         minSdk = 26
         targetSdk = 35
-        versionCode = System.getenv("VIBECODE_VERSION_CODE")?.toIntOrNull() ?: 2
-        versionName = System.getenv("VIBECODE_VERSION_NAME") ?: "0.2.0"
+        versionCode = System.getenv("VIBECODE_VERSION_CODE")?.toIntOrNull() ?: 4
+        versionName = System.getenv("VIBECODE_VERSION_NAME") ?: "0.3.1"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

@@ -57,6 +57,8 @@ data class MachineInfo(val name:String,val os:String,val arch:String,val cpus:In
 data class ServerError(val error:String="Unknown error")
 @Serializable
 data class Event(val type:String,val sessionId:String="",val data:kotlinx.serialization.json.JsonElement?=null,val at:String="")
+@Serializable
+data class AgentLogEntry(val at:String="",val level:String="INFO",val source:String="agent",val message:String="")
 
 @Serializable
 data class MachineConfig(val id:String,val name:String,val baseUrl:String,val token:String)
@@ -64,7 +66,7 @@ data class MachineConfig(val id:String,val name:String,val baseUrl:String,val to
 @Serializable data class CreateSessionRequest(val provider:String,val projectId:String,val title:String,val prompt:String)
 @Serializable data class SendMessageRequest(val text:String,val attachmentIds:List<String>)
 @Serializable data class FileContentResponse(val path:String,val content:String,val sha256:String="")
-@Serializable data class FileWriteRequest(val path:String,val content:String,val expectedSha256:String="")
+@Serializable data class FileWriteRequest(val path:String,val content:String,val expectedSha256:String)
 @Serializable data class FileWriteResponse(val ok:Boolean,val path:String="",val sha256:String="",val content:String="")
 @Serializable data class FileRevision(val id:String,val sha256:String,val size:Long=0,val createdAt:String="")
 @Serializable data class FileRevisionContent(val path:String,val content:String,val sha256:String,val createdAt:String="",val revision:FileRevision?=null)

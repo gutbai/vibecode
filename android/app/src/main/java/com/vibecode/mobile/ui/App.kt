@@ -11,10 +11,11 @@ import androidx.compose.ui.unit.dp
 import com.vibecode.mobile.data.*
 import kotlinx.coroutines.launch
 
-private enum class Tab{Sessions,Files,Machines}
+private enum class Tab{Sessions,Files,Logs,Machines}
 
 @Composable fun VibeCodeApp(){
     val context=androidx.compose.ui.platform.LocalContext.current
+    AppLog.init(context)
     val store=remember{ConnectionStore(context)}
     var machines by remember{mutableStateOf(store.loadMachines())}
     var selected by remember{mutableStateOf(store.selectedId()?.let{ id->machines.find{it.id==id}} ?: machines.firstOrNull())}
@@ -42,6 +43,7 @@ private enum class Tab{Sessions,Files,Machines}
     Scaffold(bottomBar={NavigationBar{
         NavigationBarItem(selected=tab==Tab.Sessions,onClick={tab=Tab.Sessions},icon={Icon(Icons.Default.Terminal,null)},label={Text("Sessions")})
         NavigationBarItem(selected=tab==Tab.Files,onClick={tab=Tab.Files},icon={Icon(Icons.Default.Folder,null)},label={Text("Files")})
+        NavigationBarItem(selected=tab==Tab.Logs,onClick={tab=Tab.Logs},icon={Icon(Icons.Default.BugReport,null)},label={Text("Logs")})
         NavigationBarItem(selected=tab==Tab.Machines,onClick={tab=Tab.Machines},icon={Icon(Icons.Default.Dns,null)},label={Text("Machines")})
     }}){pad->
         Column(Modifier.padding(pad).fillMaxSize()){
@@ -68,6 +70,7 @@ private enum class Tab{Sessions,Files,Machines}
                 when(tab){
                     Tab.Sessions->SessionsScreen(repo,enabled=selected!=null&&connected,onOpen={detailId=it})
                     Tab.Files->FilesScreen(repo,enabled=selected!=null&&connected)
+                    Tab.Logs->LogsScreen(repo,enabled=selected!=null&&connected)
                     Tab.Machines->MachinesScreen(
                         items=machines,
                         selectedId=selected?.id,
