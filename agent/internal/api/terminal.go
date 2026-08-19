@@ -33,6 +33,17 @@ func clampTerminalSize(v, fallback int) int {
 	return v
 }
 
+// terminalTextPayload keeps terminal output compatible with Android WebView.
+// Some WebView versions establish the websocket correctly but fail to deliver
+// binary websocket frames to xterm. Text frames are reliable there. The leading
+// NUL guarantees the current JS path treats the frame as terminal text rather
+// than accidentally parsing a JSON-looking terminal line; xterm ignores NUL.
+func terminalTextPayload(data []byte) []byte {
+	text := strings.ToValidUTF8(string(data), "\uFFFD")
+	payload := make([]byte, 1, len(text)+1)
+	return append(payload, text...)
+}
+
 // terminalWS bridges a browser/xterm client to a real tmux client running in a
 // pseudo-terminal. The tmux session itself stays alive when the websocket is
 // disconnected; only this attached client is terminated.
@@ -73,7 +84,7 @@ func (s *Server) terminalWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	logbuf.Add("INFO", "terminal", fmt.Sprintf("websocket OPEN session=%s tmux=%s", sessionID, sess.TMuxName))
+	logbuf.Add("INFO", "terminal", fmt.Sprintf("websocket OPEN session=%s tmux=%s transport=text", sessionID, sess.TMuxName))
 	defer logbuf.Add("INFO", "terminal", fmt.Sprintf("websocket CLOSED session=%s", sessionID))
 
 	ctx, cancel := context.WithCancel(r.Context())
@@ -106,13 +117,13 @@ func (s *Server) terminalWS(w http.ResponseWriter, r *http.Request) {
 		frame = append(frame, []byte("\x1b[2J\x1b[H")...)
 		frame = append(frame, snapshot...)
 		writeMu.Lock()
-		writeErr := conn.WriteMessage(websocket.BinaryMessage, frame)
+		writeErr := conn.WriteMessage(websocket.TextMessage, terminalTextPayload(frame))
 		writeMu.Unlock()
 		if writeErr != nil {
 			logbuf.Add("WARN", "terminal", fmt.Sprintf("initial snapshot write failed session=%s: %v", sessionID, writeErr))
 			return
 		}
-		logbuf.Add("INFO", "terminal", fmt.Sprintf("initial pane snapshot sent session=%s bytes=%d", sessionID, len(snapshot)))
+		logbuf.Add("INFO", "terminal", fmt.Sprintf("initial pane snapshot sent session=%s bytes=%d transport=text", sessionID, len(snapshot)))
 	} else {
 		logbuf.Add("INFO", "terminal", fmt.Sprintf("initial pane snapshot empty session=%s", sessionID))
 	}
@@ -159,11 +170,11 @@ func (s *Server) terminalWS(w http.ResponseWriter, r *http.Request) {
 			n, readErr := ptmx.Read(buf)
 			if n > 0 {
 				firstOutput.Do(func() {
-					logbuf.Add("INFO", "terminal", fmt.Sprintf("PTY output started session=%s firstChunkBytes=%d", sessionID, n))
+					logbuf.Add("INFO", "terminal", fmt.Sprintf("PTY output started session=%s firstChunkBytes=%d transport=text", sessionID, n))
 				})
 				frame := append([]byte(nil), buf[:n]...)
 				writeMu.Lock()
-				writeErr := conn.WriteMessage(websocket.BinaryMessage, frame)
+				writeErr := conn.WriteMessage(websocket.TextMessage, terminalTextPayload(frame))
 				writeMu.Unlock()
 				if writeErr != nil {
 					logbuf.Add("WARN", "terminal", fmt.Sprintf("websocket write failed session=%s: %v", sessionID, writeErr))
