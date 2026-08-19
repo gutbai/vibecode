@@ -38,8 +38,8 @@ fun LogsScreen(repo: VibeRepository, enabled: Boolean) {
             }
     }
 
-    LaunchedEffect(enabled) {
-        while (enabled) {
+    LaunchedEffect(enabled, selected) {
+        while (enabled && selected == 1) {
             refreshAgent()
             delay(3000)
         }
@@ -49,10 +49,10 @@ fun LogsScreen(repo: VibeRepository, enabled: Boolean) {
         TopAppBar(
             title = { Text("Logs") },
             actions = {
-                IconButton(onClick = { scope.launch { refreshAgent() } }, enabled = enabled) {
+                IconButton(onClick = { if (selected == 1) scope.launch { refreshAgent() } }, enabled = enabled && selected == 1) {
                     Icon(Icons.Default.Refresh, "Refresh")
                 }
-                IconButton(onClick = { AppLog.clear() }) {
+                IconButton(onClick = { AppLog.clear() }, enabled = selected == 0) {
                     Icon(Icons.Default.DeleteSweep, "Clear app log")
                 }
             },
