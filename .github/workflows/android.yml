@@ -21,10 +21,24 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Build debug APK for local stable re-signing
+      - name: Build unsigned release APK
         working-directory: android
-        run: gradle :app:assembleDebug
+        env:
+          VIBECODE_VERSION_CODE: 2
+          VIBECODE_VERSION_NAME: 0.2.0
+        run: gradle :app:assembleRelease
+      - name: Collect APK and apksigner
+        run: |
+          mkdir -p "$RUNNER_TEMP/vibecode-sign-input/apksigner/lib"
+          APK="$(find android/app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)"
+          test -n "$APK"
+          cp "$APK" "$RUNNER_TEMP/vibecode-sign-input/VibeCode-unsigned.apk"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -n "$APKSIGNER"
+          cp "$APKSIGNER" "$RUNNER_TEMP/vibecode-sign-input/apksigner/apksigner"
+          cp "$(dirname "$APKSIGNER")/lib/apksigner.jar" "$RUNNER_TEMP/vibecode-sign-input/apksigner/lib/apksigner.jar"
+          chmod +x "$RUNNER_TEMP/vibecode-sign-input/apksigner/apksigner"
       - uses: actions/upload-artifact@v4
         with:
-          name: vibecode-debug-for-resign
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: vibecode-release-sign-input
+          path: ${{ runner.temp }}/vibecode-sign-input
