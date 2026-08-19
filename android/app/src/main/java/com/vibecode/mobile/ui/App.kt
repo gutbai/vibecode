@@ -38,7 +38,7 @@ private enum class Tab{Sessions,Files,Machines}
         repo.connect(scope)
     }
 
-    if(detailId!=null){SessionDetailScreen(repo,detailId!!,onBack={detailId=null});return}
+    if(detailId!=null){SessionWorkspaceScreen(repo,detailId!!,onBack={detailId=null});return}
     Scaffold(bottomBar={NavigationBar{
         NavigationBarItem(selected=tab==Tab.Sessions,onClick={tab=Tab.Sessions},icon={Icon(Icons.Default.Terminal,null)},label={Text("Sessions")})
         NavigationBarItem(selected=tab==Tab.Files,onClick={tab=Tab.Files},icon={Icon(Icons.Default.Folder,null)},label={Text("Files")})
