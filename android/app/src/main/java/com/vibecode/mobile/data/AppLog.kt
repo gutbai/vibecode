@@ -47,9 +47,10 @@ object AppLog {
     }
 
     private fun sanitize(raw: String): String {
-        return raw
-            .replace(Regex("([?&]token=)[^&\\s]+", RegexOption.IGNORE_CASE), "$1<redacted>")
-            .replace(Regex("(Bearer\\s+)[A-Za-z0-9._~+/-]+", RegexOption.IGNORE_CASE), "$1<redacted>")
+        val withoutQueryToken = Regex("([?&]token=)[^&\\s]+", RegexOption.IGNORE_CASE)
+            .replace(raw) { match -> match.groupValues[1] + "<redacted>" }
+        return Regex("(Bearer\\s+)[A-Za-z0-9._~+/-]+", RegexOption.IGNORE_CASE)
+            .replace(withoutQueryToken) { match -> match.groupValues[1] + "<redacted>" }
             .take(4000)
     }
 }
