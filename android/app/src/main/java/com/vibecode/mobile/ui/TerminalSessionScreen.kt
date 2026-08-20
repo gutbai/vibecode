@@ -334,6 +334,8 @@ private fun RemoteTerminalWebView(
         factory = { context ->
             WebView(context).apply {
                 setBackgroundColor(AndroidColor.rgb(3, 6, 9))
+                // Some Android WebViews leave xterm layers black under hardware acceleration.
+                setLayerType(WebView.LAYER_TYPE_SOFTWARE, null)
                 isFocusable = true
                 isFocusableInTouchMode = true
                 setOnTouchListener { _, event ->
@@ -479,24 +481,54 @@ private fun terminalHtml(websocketUrl: String): String {
         fitAndNotify();
         setTimeout(fitAndNotify, 120);
       };
+      let receivedFrames = 0;
+      function writeToTerminal(text, source) {
+        if (!text) return;
+        receivedFrames += 1;
+        if (receivedFrames <= 5 || receivedFrames % 20 === 0) {
+          log('INFO', 'terminal frame #' + receivedFrames + ' source=' + source + ' chars=' + text.length + ' cols=' + term.cols + ' rows=' + term.rows);
+        }
+        term.write(text, () => {
+          try {
+            term.refresh(0, Math.max(0, term.rows - 1));
+            if (receivedFrames <= 5) {
+              const b = term.buffer.active;
+              log('INFO', 'xterm write complete #' + receivedFrames + ' cursor=' + b.cursorX + ',' + b.cursorY + ' ybase=' + b.baseY + ' lines=' + b.length);
+            }
+          } catch (e) {
+            log('WARN', 'xterm refresh failed: ' + e);
+          }
+        });
+      }
+      function decodeBase64Utf8(value) {
+        const raw = atob(String(value || ''));
+        const bytes = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+        return decoder.decode(bytes, {stream:true});
+      }
       socket.onmessage = async (event) => {
         if (typeof event.data === 'string') {
-          try {
-            const message = JSON.parse(event.data);
-            if (message.type === 'error') {
-              log('ERROR', 'server terminal error: ' + message.message);
-              term.writeln('\r\n\x1b[31m[VibeCode] ' + message.message + '\x1b[0m');
-            }
-          } catch (_) {
-            term.write(event.data);
+          let message = null;
+          try { message = JSON.parse(event.data); } catch (_) {}
+          if (message && message.type === 'error') {
+            log('ERROR', 'server terminal error: ' + message.message);
+            term.writeln('\r\n\x1b[31m[VibeCode] ' + message.message + '\x1b[0m');
+            return;
           }
+          if (message && message.type === 'output' && message.encoding === 'base64') {
+            try { writeToTerminal(decodeBase64Utf8(message.data), 'json-base64'); }
+            catch (e) { log('ERROR', 'base64 terminal decode failed: ' + e); }
+            return;
+          }
+          if (message && message.type === 'pong') return;
+          writeToTerminal(event.data, 'text');
           return;
         }
         if (event.data instanceof ArrayBuffer) {
-          term.write(decoder.decode(new Uint8Array(event.data), {stream:true}));
+          writeToTerminal(decoder.decode(new Uint8Array(event.data), {stream:true}), 'arraybuffer');
         } else if (event.data instanceof Blob) {
           const data = new Uint8Array(await event.data.arrayBuffer());
-          term.write(decoder.decode(data, {stream:true}));
+          writeToTerminal(decoder.decode(data, {stream:true}), 'blob');
         }
       };
       socket.onclose = (event) => {
