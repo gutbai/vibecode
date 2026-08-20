@@ -70,21 +70,11 @@ private fun RealTerminalSessionScreen(
     var session by remember(id) { mutableStateOf<Session?>(null) }
     var terminalView by remember(id) { mutableStateOf<WebView?>(null) }
     var actionError by remember(id) { mutableStateOf<String?>(null) }
-    var terminalDiagnostic by remember(id) { mutableStateOf<String?>(null) }
     var confirmDelete by remember(id) { mutableStateOf(false) }
     val terminalUrl = remember(id) { repo.terminalWebSocketUrl(id) }
 
     LaunchedEffect(id) {
         AppLog.add("INFO", "terminal", "open session=$id")
-        runCatching { repo.terminalProbe(id) }
-            .onSuccess { probe ->
-                terminalDiagnostic = "Endpoint: $probe"
-                AppLog.add("INFO", "terminal-probe", probe)
-            }
-            .onFailure { error ->
-                terminalDiagnostic = "Probe lỗi: ${error.message}"
-                AppLog.add("ERROR", "terminal-probe", error.message ?: error.toString())
-            }
         while (true) {
             runCatching { repo.session(id) }
                 .onSuccess { session = it }
@@ -200,17 +190,6 @@ private fun RealTerminalSessionScreen(
                 )
             }
 
-            terminalDiagnostic?.let { diagnostic ->
-                Text(
-                    diagnostic,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
-                    fontFamily = FontFamily.Monospace,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                )
-            }
-
             if (terminalUrl == null) {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Text("Chưa có kết nối VPS cho terminal.")
@@ -231,9 +210,6 @@ private fun RealTerminalSessionScreen(
                         onViewReady = { terminalView = it },
                         onDiagnostic = { level, source, message ->
                             AppLog.add(level, source, message)
-                            if (level.equals("ERROR", true) || level.equals("WARN", true)) {
-                                terminalDiagnostic = message
-                            }
                         },
                     )
                 }
@@ -248,13 +224,6 @@ private fun RealTerminalSessionScreen(
                 )
             }
 
-            Text(
-            text = if (session?.status == "WAITING_INPUT") "Cần nhập: chạm vào terminal để mở bàn phím" else "Chạm vào terminal để nhập",
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
-            style = MaterialTheme.typography.labelSmall,
-            color = if (session?.status == "WAITING_INPUT") MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
-            fontFamily = FontFamily.Monospace,
-        )
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -266,9 +235,11 @@ private fun RealTerminalSessionScreen(
                 FilledTonalIconButton(onClick = { showKeyboard() }) {
                     Icon(Icons.Default.Keyboard, "Mở bàn phím")
                 }
+                TerminalKey("Del") { sendSpecialKey("DELETE") }
                 TerminalKey("Esc") { sendSpecialKey("ESC") }
                 TerminalKey("Ctrl+A") { sendSpecialKey("CTRL_A") }
                 TerminalKey("Ctrl+C") { sendSpecialKey("CTRL_C") }
+                TerminalKey("Shift+Tab") { sendSpecialKey("SHIFT_TAB") }
                 TerminalKey("Tab") { sendSpecialKey("TAB") }
                 TerminalKey("←") { sendSpecialKey("LEFT") }
                 TerminalKey("↑") { sendSpecialKey("UP") }
@@ -575,7 +546,7 @@ private fun terminalHtml(websocketUrl: String): String {
     window.vibePaste = (text) => { sendInput(String(text || '')); term.focus(); };
     window.vibeKey = (name) => {
       const keys = {
-        ESC:'\x1b', TAB:'\t', ENTER:'\r', CTRL_A:'\x01', CTRL_C:'\x03',
+        ESC:'\x1b', TAB:'\t', SHIFT_TAB:'\x1b[Z', DELETE:'\x1b[3~', ENTER:'\r', CTRL_A:'\x01', CTRL_C:'\x03',
         LEFT:'\x1b[D', RIGHT:'\x1b[C', UP:'\x1b[A', DOWN:'\x1b[B'
       };
       const data = keys[name];
