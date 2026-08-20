@@ -1,0 +1,87 @@
+name: temp-terminal-v035
+on:
+  push:
+    branches: ['fix/terminal-protocol-v035']
+permissions:
+  contents: write
+jobs:
+  patch-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/terminal-protocol-v035
+          fetch-depth: 0
+      - name: Patch terminal protocol and Android renderer
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          agent = Path('agent/internal/api/terminal.go')
+          s = agent.read_text()
+          if '"encoding/base64"' not in s:
+              s = s.replace('import (\n\t"context"\n', 'import (\n\t"context"\n\t"encoding/base64"\n')
+          start = s.index('// terminalTextPayload keeps terminal output compatible with Android WebView.')
+          end = s.index('// terminalWS bridges', start)
+          replacement = '''// terminalOutputPayload wraps raw PTY bytes in JSON-safe base64.\n// This avoids Android WebView quirks with binary frames and control-heavy text frames.\nfunc terminalOutputPayload(data []byte) map[string]string {\n\treturn map[string]string{\n\t\t"type":     "output",\n\t\t"encoding": "base64",\n\t\t"data":     base64.StdEncoding.EncodeToString(data),\n\t}\n}\n\nfunc writeTerminalOutput(conn *websocket.Conn, data []byte) error {\n\treturn conn.WriteJSON(terminalOutputPayload(data))\n}\n\n'''
+          s = s[:start] + replacement + s[end:]
+          s = s.replace('transport=text-v2', 'transport=json-base64')
+          s = s.replace('conn.WriteMessage(websocket.TextMessage, terminalTextPayload(frame))', 'writeTerminalOutput(conn, frame)')
+          agent.write_text(s)
+
+          app = Path('android/app/src/main/java/com/vibecode/mobile/ui/TerminalSessionScreen.kt')
+          s = app.read_text()
+          s = s.replace('setBackgroundColor(AndroidColor.rgb(3, 6, 9))\n                isFocusable = true', 'setBackgroundColor(AndroidColor.rgb(3, 6, 9))\n                // Some Android WebViews leave xterm layers black under hardware acceleration.\n                setLayerType(WebView.LAYER_TYPE_SOFTWARE, null)\n                isFocusable = true')
+
+          old = '''      socket.onmessage = async (event) => {\n        if (typeof event.data === 'string') {\n          try {\n            const message = JSON.parse(event.data);\n            if (message.type === 'error') {\n              log('ERROR', 'server terminal error: ' + message.message);\n              term.writeln('\\r\\n\\x1b[31m[VibeCode] ' + message.message + '\\x1b[0m');\n            }\n          } catch (_) {\n            term.write(event.data);\n          }\n          return;\n        }\n        if (event.data instanceof ArrayBuffer) {\n          term.write(decoder.decode(new Uint8Array(event.data), {stream:true}));\n        } else if (event.data instanceof Blob) {\n          const data = new Uint8Array(await event.data.arrayBuffer());\n          term.write(decoder.decode(data, {stream:true}));\n        }\n      };'''
+          new = '''      let receivedFrames = 0;\n      function writeToTerminal(text, source) {\n        if (!text) return;\n        receivedFrames += 1;\n        if (receivedFrames <= 5 || receivedFrames % 20 === 0) {\n          log('INFO', 'terminal frame #' + receivedFrames + ' source=' + source + ' chars=' + text.length + ' cols=' + term.cols + ' rows=' + term.rows);\n        }\n        term.write(text, () => {\n          try {\n            term.refresh(0, Math.max(0, term.rows - 1));\n            if (receivedFrames <= 5) {\n              const b = term.buffer.active;\n              log('INFO', 'xterm write complete #' + receivedFrames + ' cursor=' + b.cursorX + ',' + b.cursorY + ' ybase=' + b.baseY + ' lines=' + b.length);\n            }\n          } catch (e) {\n            log('WARN', 'xterm refresh failed: ' + e);\n          }\n        });\n      }\n      function decodeBase64Utf8(value) {\n        const raw = atob(String(value || ''));\n        const bytes = new Uint8Array(raw.length);\n        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);\n        return decoder.decode(bytes, {stream:true});\n      }\n      socket.onmessage = async (event) => {\n        if (typeof event.data === 'string') {\n          let message = null;\n          try { message = JSON.parse(event.data); } catch (_) {}\n          if (message && message.type === 'error') {\n            log('ERROR', 'server terminal error: ' + message.message);\n            term.writeln('\\r\\n\\x1b[31m[VibeCode] ' + message.message + '\\x1b[0m');\n            return;\n          }\n          if (message && message.type === 'output' && message.encoding === 'base64') {\n            try { writeToTerminal(decodeBase64Utf8(message.data), 'json-base64'); }\n            catch (e) { log('ERROR', 'base64 terminal decode failed: ' + e); }\n            return;\n          }\n          if (message && message.type === 'pong') return;\n          writeToTerminal(event.data, 'text');\n          return;\n        }\n        if (event.data instanceof ArrayBuffer) {\n          writeToTerminal(decoder.decode(new Uint8Array(event.data), {stream:true}), 'arraybuffer');\n        } else if (event.data instanceof Blob) {\n          const data = new Uint8Array(await event.data.arrayBuffer());\n          writeToTerminal(decoder.decode(data, {stream:true}), 'blob');\n        }\n      };'''
+          if old not in s:
+              raise SystemExit('Android onmessage block not found')
+          s = s.replace(old, new)
+          app.write_text(s)
+
+          vp = Path('android/version.properties')
+          v = vp.read_text()
+          v = re.sub(r'VERSION_CODE=\d+', 'VERSION_CODE=8', v)
+          v = re.sub(r'VERSION_NAME=.*', 'VERSION_NAME=0.3.5', v)
+          vp.write_text(v)
+          PY
+          rm -f .github/workflows/temp-terminal-v035.yml
+          git config user.name 'VibeCode CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add agent/internal/api/terminal.go android/app/src/main/java/com/vibecode/mobile/ui/TerminalSessionScreen.kt android/version.properties .github/workflows/temp-terminal-v035.yml
+          git commit -m 'Fix terminal transport with JSON base64 and Android render diagnostics'
+          git push origin HEAD:fix/terminal-protocol-v035
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/go.mod
+      - name: Test Agent
+        working-directory: agent
+        run: |
+          go test ./...
+          go vet ./...
+          go build ./cmd/vibecode-agent
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Build Android release unsigned
+        working-directory: android
+        run: gradle :app:assembleRelease
+      - name: Align APK and collect apksigner
+        shell: bash
+        run: |
+          BT=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          "$BT/zipalign" -f 4 android/app/build/outputs/apk/release/app-release-unsigned.apk VibeCode-0.3.5-aligned-unsigned.apk
+          cp "$BT/lib/apksigner.jar" apksigner.jar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vibecode-0.3.5-signing-input
+          path: |
+            VibeCode-0.3.5-aligned-unsigned.apk
+            apksigner.jar
