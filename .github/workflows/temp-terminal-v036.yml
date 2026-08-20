@@ -1,0 +1,61 @@
+name: temp-terminal-v036
+on:
+  push:
+    branches: ['fix/terminal-rows-v036']
+    paths: ['.github/workflows/temp-terminal-v036.yml']
+permissions:
+  contents: write
+jobs:
+  patch-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/terminal-rows-v036
+          fetch-depth: 0
+      - name: Patch xterm sizing
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('android/app/src/main/java/com/vibecode/mobile/ui/TerminalSessionScreen.kt')
+          s = p.read_text()
+          s = s.replace('                // Some Android WebViews leave xterm layers black under hardware acceleration.\n                setLayerType(WebView.LAYER_TYPE_SOFTWARE, null)\n', '')
+          s = s.replace('''    html, body, #terminal { width:100%; height:100%; margin:0; padding:0; background:#030609; overflow:hidden; }\n    body { touch-action: manipulation; }\n    #terminal { box-sizing:border-box; padding:6px 4px 2px 6px; }''', '''    html, body { width:100%; height:100%; margin:0; padding:0; background:#030609; overflow:hidden; }\n    body { position:fixed; inset:0; touch-action:manipulation; }\n    #terminal { position:absolute; inset:0; box-sizing:border-box; padding:6px 4px 2px 6px; }''')
+          old = '''    function fitAndNotify() {\n      try { fit.fit(); } catch (e) { log('WARN', 'fit failed: ' + e); }\n      sendObject({type:'resize', cols:term.cols, rows:term.rows});\n    }'''
+          new = '''    const terminalEl = document.getElementById('terminal');\n    let sizeLogCount = 0;\n    function fitAndNotify(reason = 'fit') {\n      try { fit.fit(); } catch (e) { log('WARN', 'fit failed: ' + e); }\n      const rect = terminalEl.getBoundingClientRect();\n      const viewportW = Math.max(window.innerWidth || 0, document.documentElement.clientWidth || 0, rect.width || 0);\n      const viewportH = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0, rect.height || 0);\n      let cols = term.cols;\n      let rows = term.rows;\n      if (rows < 8 || cols < 20) {\n        const fallbackCols = Math.max(20, Math.floor(Math.max(160, viewportW - 12) / 8.5));\n        const fallbackRows = Math.max(12, Math.floor(Math.max(216, viewportH - 12) / 18));\n        cols = cols < 20 ? fallbackCols : cols;\n        rows = rows < 8 ? fallbackRows : rows;\n        term.resize(cols, rows);\n        log('WARN', 'xterm unusable fit reason=' + reason + ' viewport=' + Math.round(viewportW) + 'x' + Math.round(viewportH) + ' corrected=' + cols + 'x' + rows);\n      } else if (sizeLogCount < 5) {\n        sizeLogCount += 1;\n        log('INFO', 'xterm size reason=' + reason + ' viewport=' + Math.round(viewportW) + 'x' + Math.round(viewportH) + ' cols=' + cols + ' rows=' + rows);\n      }\n      sendObject({type:'resize', cols:cols, rows:rows});\n      try { term.refresh(0, Math.max(0, rows - 1)); } catch (_) {}\n    }'''
+          if old not in s:
+              raise SystemExit('fitAndNotify block not found')
+          s = s.replace(old, new)
+          s = s.replace("        fitAndNotify();\n        setTimeout(fitAndNotify, 120);", "        fitAndNotify('open');\n        setTimeout(() => fitAndNotify('open-120ms'), 120);\n        setTimeout(() => fitAndNotify('open-400ms'), 400);\n        setTimeout(() => fitAndNotify('open-1000ms'), 1000);")
+          s = s.replace("    document.getElementById('terminal').addEventListener('pointerdown', () => term.focus());\n    term.onResize(({cols, rows}) => sendObject({type:'resize', cols, rows}));\n    new ResizeObserver(() => setTimeout(fitAndNotify, 40)).observe(document.getElementById('terminal'));", "    terminalEl.addEventListener('pointerdown', () => term.focus());\n    term.onResize(({cols, rows}) => {\n      if (cols >= 20 && rows >= 8) sendObject({type:'resize', cols, rows});\n      else log('WARN', 'ignored unusable xterm resize cols=' + cols + ' rows=' + rows);\n    });\n    new ResizeObserver(() => setTimeout(() => fitAndNotify('resize-observer'), 40)).observe(terminalEl);\n    window.addEventListener('resize', () => setTimeout(() => fitAndNotify('window-resize'), 40));")
+          s = s.replace("    setTimeout(fitAndNotify, 80);", "    setTimeout(() => fitAndNotify('initial-80ms'), 80);\n    setTimeout(() => fitAndNotify('initial-300ms'), 300);\n    setTimeout(() => fitAndNotify('initial-800ms'), 800);")
+          p.write_text(s)
+          PY
+          git config user.name 'VibeCode CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add android/app/src/main/java/com/vibecode/mobile/ui/TerminalSessionScreen.kt
+          git commit -m 'Fix Android xterm viewport sizing'
+          git push origin HEAD:fix/terminal-rows-v036
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Build Android release unsigned
+        working-directory: android
+        run: gradle :app:assembleRelease
+      - name: Align APK and collect apksigner
+        shell: bash
+        run: |
+          BT=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          "$BT/zipalign" -f 4 android/app/build/outputs/apk/release/app-release-unsigned.apk VibeCode-0.3.6-aligned-unsigned.apk
+          cp "$BT/lib/apksigner.jar" apksigner.jar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vibecode-0.3.6-signing-input
+          path: |
+            VibeCode-0.3.6-aligned-unsigned.apk
+            apksigner.jar
