@@ -267,13 +267,14 @@ private fun RealTerminalSessionScreen(
                     Icon(Icons.Default.Keyboard, "Mở bàn phím")
                 }
                 TerminalKey("Esc") { sendSpecialKey("ESC") }
+                TerminalKey("Ctrl+A") { sendSpecialKey("CTRL_A") }
+                TerminalKey("Ctrl+C") { sendSpecialKey("CTRL_C") }
                 TerminalKey("Tab") { sendSpecialKey("TAB") }
                 TerminalKey("←") { sendSpecialKey("LEFT") }
                 TerminalKey("↑") { sendSpecialKey("UP") }
                 TerminalKey("↓") { sendSpecialKey("DOWN") }
                 TerminalKey("→") { sendSpecialKey("RIGHT") }
                 TerminalKey("Enter") { sendSpecialKey("ENTER") }
-                TerminalKey("^C") { sendSpecialKey("CTRL_C") }
                 TerminalKey("Paste") { pasteClipboard() }
             }
         }
@@ -574,7 +575,7 @@ private fun terminalHtml(websocketUrl: String): String {
     window.vibePaste = (text) => { sendInput(String(text || '')); term.focus(); };
     window.vibeKey = (name) => {
       const keys = {
-        ESC:'\x1b', TAB:'\t', ENTER:'\r', CTRL_C:'\x03',
+        ESC:'\x1b', TAB:'\t', ENTER:'\r', CTRL_A:'\x01', CTRL_C:'\x03',
         LEFT:'\x1b[D', RIGHT:'\x1b[C', UP:'\x1b[A', DOWN:'\x1b[B'
       };
       const data = keys[name];
