@@ -334,8 +334,6 @@ private fun RemoteTerminalWebView(
         factory = { context ->
             WebView(context).apply {
                 setBackgroundColor(AndroidColor.rgb(3, 6, 9))
-                // Some Android WebViews leave xterm layers black under hardware acceleration.
-                setLayerType(WebView.LAYER_TYPE_SOFTWARE, null)
                 isFocusable = true
                 isFocusableInTouchMode = true
                 setOnTouchListener { _, event ->
@@ -397,9 +395,9 @@ private fun terminalHtml(websocketUrl: String): String {
   <link rel="icon" href="data:," />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/css/xterm.css" />
   <style>
-    html, body, #terminal { width:100%; height:100%; margin:0; padding:0; background:#030609; overflow:hidden; }
-    body { touch-action: manipulation; }
-    #terminal { box-sizing:border-box; padding:6px 4px 2px 6px; }
+    html, body { width:100%; height:100%; margin:0; padding:0; background:#030609; overflow:hidden; }
+    body { position:fixed; inset:0; touch-action:manipulation; }
+    #terminal { position:absolute; inset:0; box-sizing:border-box; padding:6px 4px 2px 6px; }
     #status { position:fixed; right:8px; top:5px; z-index:20; padding:2px 6px; border-radius:5px;
       font:11px monospace; color:#94a3b8; background:rgba(3,6,9,.82); pointer-events:none; }
     .xterm .xterm-viewport { scrollbar-width:thin; }
@@ -448,9 +446,28 @@ private fun terminalHtml(websocketUrl: String): String {
       if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(value));
     }
     function sendInput(data) { sendObject({type:'input', data}); }
-    function fitAndNotify() {
+    const terminalEl = document.getElementById('terminal');
+    let sizeLogCount = 0;
+    function fitAndNotify(reason = 'fit') {
       try { fit.fit(); } catch (e) { log('WARN', 'fit failed: ' + e); }
-      sendObject({type:'resize', cols:term.cols, rows:term.rows});
+      const rect = terminalEl.getBoundingClientRect();
+      const viewportW = Math.max(window.innerWidth || 0, document.documentElement.clientWidth || 0, rect.width || 0);
+      const viewportH = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0, rect.height || 0);
+      let cols = term.cols;
+      let rows = term.rows;
+      if (rows < 8 || cols < 20) {
+        const fallbackCols = Math.max(20, Math.floor(Math.max(160, viewportW - 12) / 8.5));
+        const fallbackRows = Math.max(12, Math.floor(Math.max(216, viewportH - 12) / 18));
+        cols = cols < 20 ? fallbackCols : cols;
+        rows = rows < 8 ? fallbackRows : rows;
+        term.resize(cols, rows);
+        log('WARN', 'xterm unusable fit reason=' + reason + ' viewport=' + Math.round(viewportW) + 'x' + Math.round(viewportH) + ' corrected=' + cols + 'x' + rows);
+      } else if (sizeLogCount < 5) {
+        sizeLogCount += 1;
+        log('INFO', 'xterm size reason=' + reason + ' viewport=' + Math.round(viewportW) + 'x' + Math.round(viewportH) + ' cols=' + cols + ' rows=' + rows);
+      }
+      sendObject({type:'resize', cols:cols, rows:rows});
+      try { term.refresh(0, Math.max(0, rows - 1)); } catch (_) {}
     }
     function scheduleReconnect() {
       if (disposed) return;
@@ -478,8 +495,10 @@ private fun terminalHtml(websocketUrl: String): String {
         attempts = 0;
         status.textContent = 'live';
         status.style.color = '#34d399';
-        fitAndNotify();
-        setTimeout(fitAndNotify, 120);
+        fitAndNotify('open');
+        setTimeout(() => fitAndNotify('open-120ms'), 120);
+        setTimeout(() => fitAndNotify('open-400ms'), 400);
+        setTimeout(() => fitAndNotify('open-1000ms'), 1000);
       };
       let receivedFrames = 0;
       function writeToTerminal(text, source) {
@@ -543,9 +562,13 @@ private fun terminalHtml(websocketUrl: String): String {
     }
 
     term.onData(sendInput);
-    document.getElementById('terminal').addEventListener('pointerdown', () => term.focus());
-    term.onResize(({cols, rows}) => sendObject({type:'resize', cols, rows}));
-    new ResizeObserver(() => setTimeout(fitAndNotify, 40)).observe(document.getElementById('terminal'));
+    terminalEl.addEventListener('pointerdown', () => term.focus());
+    term.onResize(({cols, rows}) => {
+      if (cols >= 20 && rows >= 8) sendObject({type:'resize', cols, rows});
+      else log('WARN', 'ignored unusable xterm resize cols=' + cols + ' rows=' + rows);
+    });
+    new ResizeObserver(() => setTimeout(() => fitAndNotify('resize-observer'), 40)).observe(terminalEl);
+    window.addEventListener('resize', () => setTimeout(() => fitAndNotify('window-resize'), 40));
 
     window.vibeFocus = () => term.focus();
     window.vibePaste = (text) => { sendInput(String(text || '')); term.focus(); };
@@ -566,7 +589,9 @@ private fun terminalHtml(websocketUrl: String): String {
     });
 
     connect();
-    setTimeout(fitAndNotify, 80);
+    setTimeout(() => fitAndNotify('initial-80ms'), 80);
+    setTimeout(() => fitAndNotify('initial-300ms'), 300);
+    setTimeout(() => fitAndNotify('initial-800ms'), 800);
   </script>
 </body>
 </html>
