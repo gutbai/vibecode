@@ -1,0 +1,67 @@
+name: temp-ctrl-shortcuts-v037
+on:
+  push:
+    branches: ['feat/ctrl-shortcuts-v037']
+    paths: ['.github/workflows/temp-ctrl-shortcuts-v037.yml']
+permissions:
+  contents: write
+jobs:
+  patch-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/ctrl-shortcuts-v037
+          fetch-depth: 0
+      - name: Patch Ctrl shortcuts and version
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('android/app/src/main/java/com/vibecode/mobile/ui/TerminalSessionScreen.kt')
+          s = p.read_text()
+          old = '''                TerminalKey("Esc") { sendSpecialKey("ESC") }\n                TerminalKey("Tab") { sendSpecialKey("TAB") }\n                TerminalKey("←") { sendSpecialKey("LEFT") }\n                TerminalKey("↑") { sendSpecialKey("UP") }\n                TerminalKey("↓") { sendSpecialKey("DOWN") }\n                TerminalKey("→") { sendSpecialKey("RIGHT") }\n                TerminalKey("Enter") { sendSpecialKey("ENTER") }\n                TerminalKey("^C") { sendSpecialKey("CTRL_C") }\n                TerminalKey("Paste") { pasteClipboard() }'''
+          new = '''                TerminalKey("Esc") { sendSpecialKey("ESC") }\n                TerminalKey("Ctrl+A") { sendSpecialKey("CTRL_A") }\n                TerminalKey("Ctrl+C") { sendSpecialKey("CTRL_C") }\n                TerminalKey("Tab") { sendSpecialKey("TAB") }\n                TerminalKey("←") { sendSpecialKey("LEFT") }\n                TerminalKey("↑") { sendSpecialKey("UP") }\n                TerminalKey("↓") { sendSpecialKey("DOWN") }\n                TerminalKey("→") { sendSpecialKey("RIGHT") }\n                TerminalKey("Enter") { sendSpecialKey("ENTER") }\n                TerminalKey("Paste") { pasteClipboard() }'''
+          if old not in s:
+              raise SystemExit('terminal key row not found')
+          s = s.replace(old, new)
+          old_keys = "        ESC:'\\x1b', TAB:'\\t', ENTER:'\\r', CTRL_C:'\\x03',"
+          new_keys = "        ESC:'\\x1b', TAB:'\\t', ENTER:'\\r', CTRL_A:'\\x01', CTRL_C:'\\x03',"
+          if old_keys not in s:
+              raise SystemExit('terminal key mapping not found')
+          s = s.replace(old_keys, new_keys)
+          p.write_text(s)
+
+          v = Path('android/version.properties')
+          v.write_text('# Canonical Android release version.\nVERSION_CODE=10\nVERSION_NAME=0.3.7\n')
+          PY
+          git config user.name 'VibeCode CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add android/app/src/main/java/com/vibecode/mobile/ui/TerminalSessionScreen.kt android/version.properties
+          git commit -m 'Add Ctrl+A and Ctrl+C terminal shortcuts'
+          echo "$GITHUB_RUN_ID" > build-run-id-v037.txt
+          git add build-run-id-v037.txt
+          git commit -m "Record VibeCode 0.3.7 build run $GITHUB_RUN_ID"
+          git push origin HEAD:feat/ctrl-shortcuts-v037
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Build Android release unsigned
+        working-directory: android
+        run: gradle :app:assembleRelease
+      - name: Align APK and collect apksigner
+        shell: bash
+        run: |
+          BT=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          "$BT/zipalign" -f 4 android/app/build/outputs/apk/release/app-release-unsigned.apk VibeCode-0.3.7-aligned-unsigned.apk
+          cp "$BT/lib/apksigner.jar" apksigner.jar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vibecode-0.3.7-signing-input
+          path: |
+            VibeCode-0.3.7-aligned-unsigned.apk
+            apksigner.jar
